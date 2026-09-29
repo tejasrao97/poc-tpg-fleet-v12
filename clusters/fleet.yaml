@@ -88,3 +88,8 @@ clusters:
           exposure: loadBalancer
         backup:
           enableSSL: false
+        patches:
+          postgres:
+            current: patches/pg-res-etkuw.yaml
+          values:
+            current: patches/pg-bkp-akw72.yaml
