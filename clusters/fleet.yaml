@@ -46,6 +46,9 @@ clusters:
                 memory: 8Gi
         backup:
           enableSSL: false
+        patches:
+          postgres:
+            current: patches/pg-res-hl621.yaml
   aks-tpg-poc-02:
     operator:
       version: v4.4.0

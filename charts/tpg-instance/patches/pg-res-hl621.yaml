@@ -1,0 +1,18 @@
+apiVersion: sql.tanzu.vmware.com/v1
+kind: Postgres
+spec:
+  resources:
+    data:
+      limits:
+        cpu: "3"
+        memory: 3Gi
+      requests:
+        cpu: "1"
+        memory: 1Gi
+    metrics:
+      limits:
+        cpu: 200m
+        memory: 200Mi
+      requests:
+        cpu: 150m
+        memory: 150Mi
