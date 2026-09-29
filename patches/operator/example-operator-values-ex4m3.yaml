@@ -1,0 +1,23 @@
+# Example operator values patch (tpg-patch operatorValuesPatchFilePath), as the
+# workflow stores it: <name>-<uid>.yaml, referenced by clusters/fleet.example.yaml.
+# Write the same content in a file on the machine that submits the run and pass its
+# path. Values of the vmware-sql-postgres-operator chart; only these keys are accepted
+# (Round 14), any other key fails the run:
+#   operatorImage                 <registry>/postgres-operator:<tag>; the tag must be the
+#                                 cluster's operator version (tpg-upgrade changes it)
+#   instanceRegistryRepo          the Postgres instance image repository, no tag
+#   ferretDBImageRepo             the FerretDB image repository, no tag ("" allowed)
+#   dockerRegistrySecretName      an image pull Secret that exists in tanzu-postgres-operator
+#   certManagerClusterIssuerName  a cert-manager ClusterIssuer that exists
+#   certManagerNamespace          a namespace that exists
+#   resources                     limits and requests, cpu and memory only
+#   enableSecurityContext         true or false
+# The workflow copies the current file of a cluster to
+# patches/operator/clusters/<cluster>.yaml, which the tpg-operator Application reads.
+resources:
+  requests:
+    cpu: 500m
+    memory: 300Mi
+  limits:
+    cpu: 500m
+    memory: 300Mi

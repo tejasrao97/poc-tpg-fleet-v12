@@ -1,0 +1,173 @@
+# CustomResourceDefinition postgresversionupgrades.sql.tanzu.vmware.com as installed by the Tanzu for Postgres operator 4.5.0
+# (kubectl get crd postgresversionupgrades.sql.tanzu.vmware.com -o yaml on the lab cluster; volatile metadata and status removed).
+# Reference only: tools/crd-defaults/generate.py reads it. Never applied from here.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  labels:
+    app: postgres-operator
+  name: postgresversionupgrades.sql.tanzu.vmware.com
+spec:
+  conversion:
+    strategy: None
+  group: sql.tanzu.vmware.com
+  names:
+    kind: PostgresVersionUpgrade
+    listKind: PostgresVersionUpgradeList
+    plural: postgresversionupgrades
+    singular: postgresversionupgrade
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - description: The version upgrade status
+      jsonPath: .status.phase
+      name: Status
+      type: string
+    - description: The version upgrade preCheck status
+      jsonPath: .status.preCheckStatus
+      name: PreCheck Status
+      type: string
+    - jsonPath: .status.timeStarted
+      name: Time Started
+      type: string
+    - jsonPath: .status.timeCompleted
+      name: Time Completed
+      type: string
+    name: v1
+    schema:
+      openAPIV3Schema:
+        description: PostgresVersionUpgrade is the Schema for the postgresversionupgrades API
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation of an object.
+
+              Servers should convert recognized schemas to the latest internal value, and
+
+              may reject unrecognized values.
+
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this object represents.
+
+              Servers may infer this from the endpoint the client submits requests to.
+
+              Cannot be updated.
+
+              In CamelCase.
+
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: PostgresVersionUpgradeSpec defines the desired state of PostgresVersionUpgrade
+            properties:
+              omitBackup:
+                default: false
+                description: OmitBackup provides the option to opt out of backup when performing major version upgrades
+                type: boolean
+              postgresInstance:
+                description: PostgresInstance references the target instance which should be upgraded
+                properties:
+                  name:
+                    default: ''
+                    description: 'Name of the referent.
+
+                      This field is effectively required, but due to backwards compatibility is
+
+                      allowed to be empty. Instances of this type with an empty value here are
+
+                      almost certainly wrong.
+
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names'
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              postgresVersion:
+                description: PostgresVersion references the version to upgrade the target instance to
+                properties:
+                  name:
+                    default: ''
+                    description: 'Name of the referent.
+
+                      This field is effectively required, but due to backwards compatibility is
+
+                      allowed to be empty. Instances of this type with an empty value here are
+
+                      almost certainly wrong.
+
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names'
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              versionJobUpgradeStorageClassName:
+                description: 'VersionUpgradeJobStorageClassName describes StorageClass to use for dynamically provisioning
+                  Persistent Volumes for postgres binary
+
+                  (PVs) for a Postgres Binary for Version Upgrade Job'
+                type: string
+              versionPreUpgradeJobStorageClassName:
+                description: 'VersionPreUpgradeJobStorageClassName describes StorageClass to use for dynamically provisioning
+                  Persistent Volumes for postgres binary
+
+                  (PVs) for a Postgres Binary for Version PreUpgrade Job'
+                type: string
+            required:
+            - omitBackup
+            - postgresInstance
+            - postgresVersion
+            type: object
+          status:
+            description: PostgresVersionUpgradeStatus defines the observed state of PostgresVersionUpgrade
+            properties:
+              desiredHighAvailabilityConfig:
+                description: DesiredHighAvailabilityConfig is an internal state field that indicates the final HA configuration
+                properties:
+                  enabled:
+                    description: 'Enabled specifies whether the Postgres instance is created in a single or cluster mode configuration.
+
+                      By default, false is used'
+                    type: boolean
+                  podDisruptionBudget:
+                    description: PodDisruptionBudget holds the settings related to Pod Disruption Budget
+                    properties:
+                      enabled:
+                        default: false
+                        description: Enabled specifies whether the Pod Disruption Budget should be enabled for the instance
+                        type: boolean
+                    type: object
+                  readReplicas:
+                    description: ReadReplicas specifies the number of read replicas to create when HA mode is enabled
+                    type: integer
+                type: object
+              message:
+                description: Message provides details about the current status of the PostgresVersionUpgrade.
+                type: string
+              phase:
+                description: Phase indicates the status of the upgrade.
+                type: string
+              preCheckErrors:
+                description: PreCheckErrors provides details about the precheck errors for the given the PostgresVersionUpgrade.
+                type: string
+              preCheckStatus:
+                description: PreCheckStatus provides details about the precheck status of the PostgresVersionUpgrade.
+                type: string
+              timeCompleted:
+                description: TimeCompleted indicates the time that this PostgresVersionUpgrade completed or failed.
+                format: date-time
+                type: string
+              timeStarted:
+                description: TimeStarted indicates the time that this PostgresVersionUpgrade was started.
+                format: date-time
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

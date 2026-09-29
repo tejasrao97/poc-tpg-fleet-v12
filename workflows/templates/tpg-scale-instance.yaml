@@ -1,0 +1,325 @@
+# Day 1: scale the read replicas of Postgres instances. Targets: clusterMap (replicas
+# per instance) or the instances list on every cluster of the clusters list. The new
+# counts are written to clusters/fleet.yaml in one commit (pushMode direct or pr), then
+# each instance is synced and verified, cluster by cluster as rolloutMode says (canary,
+# batches of maxParallel, or all at once; a failed batch stops the rest, and the exit
+# handler gives the instances it did not reach their previous count back in
+# clusters/fleet.yaml). replicas 0
+# makes a single node (high availability off, design decision D72). maxReadReplicas
+# changes the cap of a cluster (Round 14, D80); a run may set only the cap.
+#
+# clusterMap examples (the inputs are the defaults of the map keys):
+#   aks-tpg-poc-01:
+#     maxReadReplicas: 4                # cluster key: the new cap
+#     instances:
+#       orders-db: {replicas: 3}
+#       billing-db: {replicas: 0}       # single node
+#   aks-tpg-poc-02:
+#     instances:
+#       reporting-db: {replicas: 1, enableHAIfNeeded: false}
+#   aks-tpg-poc-03:
+#     maxReadReplicas: 2                # cap only: no instance is synced
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: tpg-scale-instance
+  namespace: argo
+  annotations:
+    workflows.argoproj.io/description: >-
+      Day 1: scale the read replicas of Postgres instances on one or more clusters (clusterMap,
+      or clusters and instances lists). The new counts are written to clusters/fleet.yaml in
+      one commit, then the instances are synced and verified cluster by cluster (rolloutMode,
+      maxParallel). replicas 0 makes a single node (high availability off). maxReadReplicas
+      sets the cap of the cluster, alone or with a scale.
+spec:
+  serviceAccountName: tpg-workflow
+  # Vault Agent (injector on the hub) renders tpg/shared/broadcom-registry,
+  # github-push and backup-storage into /vault/secrets before each step starts
+  # (ConfigMap tpg-vault-agent, workflows/vault-agent/config-init.hcl).
+  # Steps that need no credentials set agent-inject to "false".
+  podMetadata:
+    annotations:
+      vault.hashicorp.com/agent-inject: "true"
+      vault.hashicorp.com/agent-pre-populate-only: "true"
+      vault.hashicorp.com/agent-init-first: "true"
+      vault.hashicorp.com/agent-configmap: tpg-vault-agent
+      vault.hashicorp.com/tls-secret: vault-ca
+  entrypoint: main
+  onExit: exit-handler
+  parallelism: 10
+  arguments:
+    parameters:
+    # ---- targets: clusters and instances, or clusterMap (one of the two)
+    - name: clusters
+      description: "List: comma-separated registered clusters (without clusterMap)"
+      value: ""
+    - name: instances
+      description: "List: instances to scale on every listed cluster; each must be declared there (without clusterMap)"
+      value: ""
+    - name: clusterMap
+      description: "Map (YAML or JSON): cluster -> {maxReadReplicas, instances: {instance -> {replicas, enableHAIfNeeded}}}; the inputs below are the defaults. Example: {aks-tpg-poc-01: {maxReadReplicas: 4, instances: {orders-db: {replicas: 3}, billing-db: {replicas: 0}}}, aks-tpg-poc-02: {instances: {reporting-db: {replicas: 1}}}}"
+      value: ""
+    # ---- mandatory with instances (with clusterMap: the map key or the input)
+    - name: replicas
+      description: "Integer: read replicas (0 to maxReadReplicas, default maximum 3); 0 makes a single node (high availability off)"
+      value: ""
+    - name: maxReadReplicas
+      description: "Integer, 1 or more: new cap on readReplicas for every selected cluster (clusters.<c>.cluster.maxReadReplicas, default 3); empty keeps it. Alone (no instances) it only changes the cap; below the read replicas of an instance of the cluster it is refused (MAX_BELOW_CURRENT)"
+      value: ""
+    - name: pushMode
+      description: "direct: push to the fleet branch; pr: open a pull request and continue after it is merged"
+      value: ""
+      enum: ["", "direct", "pr"]
+    # ---- optional
+    - name: enableHAIfNeeded
+      description: "replicas > 0 on an instance without high availability: turn it on (true) or fail (false)"
+      value: "true"
+      enum: ["true", "false"]
+    - name: rolloutMode
+      description: "all (default): every cluster at once; canary: one wave-0 cluster first, then batches of maxParallel; batches: no canary, batches of maxParallel. A failed batch stops the later ones"
+      value: all
+      enum: ["canary", "batches", "all"]
+    - name: maxParallel
+      description: "Clusters per batch for rolloutMode canary and batches"
+      value: "2"
+    - name: dryRun
+      value: "false"
+      enum: ["false", "true"]
+    - name: timeoutSeconds
+      value: "900"
+    - name: prTimeoutSeconds
+      value: "3600"
+    - name: toolsImage
+      value: alpine/k8s:1.35.8
+  volumes:
+    - name: scripts
+      configMap:
+        name: tpg-scripts
+        defaultMode: 0755
+  templates:
+  - name: main
+    steps:
+    - - name: validate
+        template: validate
+    - - name: init
+        templateRef:
+          name: tpg-lib
+          template: init-run
+    - - name: discover
+        templateRef:
+          name: tpg-lib
+          template: discover
+        arguments:
+          parameters:
+            - name: clusters
+              value: "{{steps.validate.outputs.parameters.selection}}"
+            - name: filter
+              value: pairs
+            - name: instances
+              value: "{{workflow.parameters.instances}}"
+            - name: clusterMap
+              value: "{{workflow.parameters.clusterMap}}"
+    - - name: plan
+        template: plan
+    - - name: batches
+        templateRef:
+          name: tpg-lib
+          template: plan-batches
+        arguments:
+          parameters:
+            - name: requirePrecheck
+              value: "true"
+            - name: maxParallel
+              value: "{{workflow.parameters.maxParallel}}"
+            - name: rolloutMode
+              value: "{{workflow.parameters.rolloutMode}}"
+    - - name: rollout
+        template: run-batches
+        when: "{{steps.batches.outputs.parameters.hasBatches}} == true"
+        arguments:
+          parameters:
+            - name: batches
+              value: "{{steps.batches.outputs.parameters.batches}}"
+            - name: items
+              value: "{{steps.plan.outputs.parameters.items}}"
+  # One batch of clusters at a time: the instances of the batch's clusters in
+  # parallel (one at a time per instance), then the next batch
+  - name: run-batches
+    inputs:
+      parameters:
+        - name: batches
+        - name: items
+    steps:
+    - - name: split
+        templateRef:
+          name: tpg-lib
+          template: split-first
+        arguments:
+          parameters:
+            - name: batches
+              value: "{{inputs.parameters.batches}}"
+    - - name: select
+        template: batch-items
+        arguments:
+          parameters:
+            - name: clusters
+              value: "{{steps.split.outputs.parameters.first}}"
+            - name: items
+              value: "{{inputs.parameters.items}}"
+    - - name: scale
+        template: scale
+        arguments:
+          parameters:
+            - name: cluster
+              value: "{{item.cluster}}"
+            - name: instance
+              value: "{{item.instance}}"
+            - name: replicas
+              value: "{{item.replicas}}"
+            - name: previous
+              value: "{{item.previous}}"
+        withParam: "{{steps.select.outputs.parameters.items}}"
+    - - name: next
+        template: run-batches
+        when: "{{steps.split.outputs.parameters.hasRest}} == true"
+        arguments:
+          parameters:
+            - name: batches
+              value: "{{steps.split.outputs.parameters.rest}}"
+            - name: items
+              value: "{{inputs.parameters.items}}"
+  - name: batch-items
+    metadata:
+      annotations:
+        vault.hashicorp.com/agent-inject: "false"
+    inputs:
+      parameters:
+        - name: clusters
+        - name: items
+    outputs:
+      parameters:
+        - name: items
+          valueFrom:
+            path: /tmp/batch-items.json
+            default: "[]"
+    container:
+      image: "{{workflow.parameters.toolsImage}}"
+      command: [bash, -c]
+      args:
+        - >-
+          jq -c --argjson c "$0" '[.[] | select(.cluster as $x | any($c[]; . == $x))]' <<<"$1"
+          > /tmp/batch-items.json && cat /tmp/batch-items.json
+        - "{{inputs.parameters.clusters}}"
+        - "{{inputs.parameters.items}}"
+  - name: validate
+    # Vault Agent (the workflow default): the validate step reads clusters/fleet.yaml
+    # when replicas > 0 comes with enableHAIfNeeded=false (single-node check)
+    outputs:
+      parameters:
+        - name: selection
+          valueFrom:
+            path: /tmp/selection
+            default: ""
+    container:
+      image: "{{workflow.parameters.toolsImage}}"
+      command: [bash, /scripts/validate-params.sh, scale]
+      env: &scale-env
+        - {name: P_CLUSTER_MAP, value: "{{workflow.parameters.clusterMap}}"}
+        - {name: P_CLUSTERS, value: "{{workflow.parameters.clusters}}"}
+        - {name: P_INSTANCES, value: "{{workflow.parameters.instances}}"}
+        - {name: P_REPLICAS, value: "{{workflow.parameters.replicas}}"}
+        - {name: P_MAX_READ_REPLICAS, value: "{{workflow.parameters.maxReadReplicas}}"}
+        - {name: P_MAX_PARALLEL, value: "{{workflow.parameters.maxParallel}}"}
+        - {name: P_ROLLOUT_MODE, value: "{{workflow.parameters.rolloutMode}}"}
+        - {name: P_PUSH_MODE, value: "{{workflow.parameters.pushMode}}"}
+        - {name: P_ENABLE_HA, value: "{{workflow.parameters.enableHAIfNeeded}}"}
+        - {name: P_DRY_RUN, value: "{{workflow.parameters.dryRun}}"}
+        - {name: P_TIMEOUT, value: "{{workflow.parameters.timeoutSeconds}}"}
+        - {name: P_PR_TIMEOUT, value: "{{workflow.parameters.prTimeoutSeconds}}"}
+      volumeMounts:
+        - name: scripts
+          mountPath: /scripts
+  - name: plan
+    outputs:
+      parameters:
+        - name: items
+          valueFrom:
+            path: /tmp/items.json
+            default: "[]"
+    container:
+      image: "{{workflow.parameters.toolsImage}}"
+      command: [bash, /scripts/scale-instance.sh, plan]
+      args:
+        - "{{workflow.name}}"
+      env: *scale-env
+      volumeMounts:
+        - name: scripts
+          mountPath: /scripts
+  - name: scale
+    inputs:
+      parameters:
+        - name: cluster
+        - name: instance
+        - name: replicas
+        - name: previous
+    synchronization:
+      mutexes:
+        - name: "tpg-instance-{{inputs.parameters.cluster}}-{{inputs.parameters.instance}}"
+    outputs:
+      parameters:
+        - name: result
+          valueFrom:
+            path: /tmp/result
+            default: UNKNOWN
+    metrics:
+      prometheus:
+        - name: tpg_scale_result
+          help: "Scaling result per instance"
+          labels:
+            - key: cluster
+              value: "{{inputs.parameters.cluster}}"
+            - key: instance_name
+              value: "{{inputs.parameters.instance}}"
+            - key: result
+              value: "{{outputs.parameters.result}}"
+          counter:
+            value: "1"
+    container:
+      image: "{{workflow.parameters.toolsImage}}"
+      command: [bash, /scripts/scale-instance.sh, apply]
+      args:
+        - "{{workflow.name}}"
+        - "{{inputs.parameters.cluster}}"
+        - "{{inputs.parameters.instance}}"
+        - "{{workflow.parameters.timeoutSeconds}}"
+        - "{{inputs.parameters.replicas}}"
+        - "{{inputs.parameters.previous}}"
+      env: *scale-env
+      volumeMounts:
+        - name: scripts
+          mountPath: /scripts
+  - name: restore
+    container:
+      image: "{{workflow.parameters.toolsImage}}"
+      command: [bash, /scripts/scale-instance.sh, restore]
+      args:
+        - "{{workflow.name}}"
+      env: *scale-env
+      volumeMounts:
+        - name: scripts
+          mountPath: /scripts
+  - name: exit-handler
+    steps:
+    # a failed batch stops the later ones: give their instances the previous count
+    # back in clusters/fleet.yaml, then report
+    - - name: restore
+        template: restore
+        when: "{{workflow.status}} != Succeeded"
+    - - name: report
+        templateRef:
+          name: tpg-lib
+          template: report
+        arguments:
+          parameters:
+            - name: mode
+              value: steps

@@ -1,0 +1,14 @@
+# Example for charts/crd-reference (the 4.5 documentation sample, adapted to the
+# fleet names). Render it with:
+#   helm template ref charts/crd-reference -f charts/crd-reference/examples/postgresRestore.yaml
+postgresRestore:
+  enabled: true
+  name: orders-db-restore
+  spec:
+    pitr:
+      type: latest
+      sourceBackupLocation: {name: orders-db-backup-location, stanzaName: pg-orders-db-orders-db-0000}
+    targetInstance:
+      name: orders-db-copy
+      spec:
+        postgresVersion: {name: postgres-17.6}

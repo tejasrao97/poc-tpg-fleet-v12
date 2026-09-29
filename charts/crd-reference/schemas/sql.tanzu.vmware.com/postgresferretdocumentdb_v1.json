@@ -1,0 +1,141 @@
+{
+ "additionalProperties": false,
+ "description": "PostgresFerretDocumentDB is the Schema for the postgresferretdocumentdb API",
+ "properties": {
+  "apiVersion": {
+   "description": "APIVersion defines the versioned schema of this representation of an object.\nServers should convert recognized schemas to the latest internal value, and\nmay reject unrecognized values.\nMore info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources",
+   "type": "string"
+  },
+  "kind": {
+   "description": "Kind is a string value representing the REST resource this object represents.\nServers may infer this from the endpoint the client submits requests to.\nCannot be updated.\nIn CamelCase.\nMore info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds",
+   "type": "string"
+  },
+  "metadata": {
+   "type": "object"
+  },
+  "spec": {
+   "additionalProperties": false,
+   "description": "PostgresFerretDocumentDBSpec defines the desired state of PostgresFerretDocumentDB",
+   "properties": {
+    "postgres": {
+     "additionalProperties": false,
+     "description": "PostgreSQL connection configuration",
+     "properties": {
+      "connectionDetails": {
+       "additionalProperties": false,
+       "description": "PostgresConnectionDetails defines connection details for PostgreSQL instances",
+       "properties": {
+        "readOnly": {
+         "additionalProperties": false,
+         "description": "Connection details for PostgreSQL standby (read-only)",
+         "properties": {
+          "secretName": {
+           "description": "Name of the secret containing connection details",
+           "type": "string"
+          }
+         },
+         "required": [
+          "secretName"
+         ],
+         "type": "object"
+        },
+        "readWrite": {
+         "additionalProperties": false,
+         "description": "Connection details for PostgreSQL primary (read-write)",
+         "properties": {
+          "secretName": {
+           "description": "Name of the secret containing connection details",
+           "type": "string"
+          }
+         },
+         "required": [
+          "secretName"
+         ],
+         "type": "object"
+        }
+       },
+       "required": [
+        "readWrite"
+       ],
+       "type": "object"
+      }
+     },
+     "required": [
+      "connectionDetails"
+     ],
+     "type": "object"
+    },
+    "readOnly": {
+     "additionalProperties": false,
+     "description": "ReadOnly configuration for FerretDB instances that connect to PostgreSQL standby",
+     "properties": {
+      "replicas": {
+       "default": 1,
+       "description": "Number of replicas for this FerretDB instance type",
+       "format": "int32",
+       "type": "integer"
+      }
+     },
+     "type": "object"
+    },
+    "readWrite": {
+     "additionalProperties": false,
+     "description": "ReadWrite configuration for FerretDB instances that connect to PostgreSQL primary",
+     "properties": {
+      "replicas": {
+       "default": 1,
+       "description": "Number of replicas for this FerretDB instance type",
+       "format": "int32",
+       "type": "integer"
+      }
+     },
+     "type": "object"
+    },
+    "service": {
+     "additionalProperties": false,
+     "description": "Service configuration",
+     "properties": {
+      "readOnlyServiceAnnotations": {
+       "additionalProperties": {
+        "type": "string"
+       },
+       "type": "object"
+      },
+      "readOnlyServiceType": {
+       "default": "ClusterIP",
+       "description": "ReadOnlyServiceType describes the Kubernetes publishing service used for the ferret instance read replica(s).\nBy default, ClusterIP is used",
+       "enum": [
+        "ClusterIP",
+        "LoadBalancer"
+       ],
+       "type": "string"
+      },
+      "serviceAnnotations": {
+       "additionalProperties": {
+        "type": "string"
+       },
+       "type": "object"
+      },
+      "serviceType": {
+       "default": "ClusterIP",
+       "description": "ServiceType describes the Kubernetes publishing service used for the ferret instance.\nBy default, ClusterIP is used",
+       "enum": [
+        "ClusterIP",
+        "LoadBalancer"
+       ],
+       "type": "string"
+      }
+     },
+     "type": "object"
+    }
+   },
+   "required": [
+    "postgres",
+    "readWrite",
+    "service"
+   ],
+   "type": "object"
+  }
+ },
+ "type": "object"
+}

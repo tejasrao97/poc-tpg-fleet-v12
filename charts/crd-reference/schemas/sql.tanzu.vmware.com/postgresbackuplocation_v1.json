@@ -1,0 +1,298 @@
+{
+ "additionalProperties": false,
+ "description": "PostgresBackupLocation is the Schema for the postgresbackuplocations API",
+ "properties": {
+  "apiVersion": {
+   "description": "APIVersion defines the versioned schema of this representation of an object.\nServers should convert recognized schemas to the latest internal value, and\nmay reject unrecognized values.\nMore info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources",
+   "type": "string"
+  },
+  "kind": {
+   "description": "Kind is a string value representing the REST resource this object represents.\nServers may infer this from the endpoint the client submits requests to.\nCannot be updated.\nIn CamelCase.\nMore info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds",
+   "type": "string"
+  },
+  "metadata": {
+   "type": "object"
+  },
+  "spec": {
+   "additionalProperties": false,
+   "description": "PostgresBackupLocationSpec defines the desired state of PostgresBackupLocation",
+   "properties": {
+    "additionalParameters": {
+     "additionalProperties": {
+      "type": "string"
+     },
+     "type": "object"
+    },
+    "backupIntegrityValidation": {
+     "additionalProperties": false,
+     "properties": {
+      "enabled": {
+       "default": true,
+       "description": "Enabled specifies whether the Operator should periodically perform integrity checks on the contents of this backup location.",
+       "type": "boolean"
+      }
+     },
+     "type": "object"
+    },
+    "backupSync": {
+     "additionalProperties": false,
+     "properties": {
+      "enabled": {
+       "default": true,
+       "description": "Enabled specifies whether backups from different namespaces or clusters that use\nthe same backup location config will be created in the current namespace",
+       "type": "boolean"
+      }
+     },
+     "type": "object"
+    },
+    "retentionPolicy": {
+     "additionalProperties": false,
+     "properties": {
+      "diffRetention": {
+       "additionalProperties": false,
+       "description": "DiffRetention describes the retention policy for differential backups",
+       "properties": {
+        "number": {
+         "description": "Number is number of differential backups to retain",
+         "type": "integer"
+        }
+       },
+       "type": "object"
+      },
+      "fullRetention": {
+       "additionalProperties": false,
+       "description": "FullRetention describes the retention policy for full backups",
+       "properties": {
+        "number": {
+         "description": "Number is number of days for Type time or number of backups for Type count",
+         "type": "integer"
+        },
+        "type": {
+         "description": "Type represents a time period (days) or count of full backups to keep",
+         "enum": [
+          "count",
+          "time"
+         ],
+         "type": "string"
+        }
+       },
+       "type": "object"
+      }
+     },
+     "type": "object"
+    },
+    "storage": {
+     "additionalProperties": false,
+     "properties": {
+      "azure": {
+       "additionalProperties": false,
+       "description": "Azure describes the configuration for Azure backups",
+       "properties": {
+        "caBundle": {
+         "description": "CABundle is a PEM encoded CA bundle which will be used to validate the Azure endpoint certificate",
+         "type": "string"
+        },
+        "container": {
+         "description": "Container describes the Azure container storage in which the backups will be stored",
+         "type": "string"
+        },
+        "enableSSL": {
+         "default": true,
+         "description": "EnableSSL forces Azure server validation",
+         "type": "boolean"
+        },
+        "endpoint": {
+         "default": "blob.core.windows.net",
+         "description": "Endpoint describes the endpoint used to connect to the blob service. Default is generally correct unless using Azure Government",
+         "type": "string"
+        },
+        "forcePathStyle": {
+         "description": "ForcePathStyle forces the use of path-style addressing for azure operations",
+         "type": "boolean"
+        },
+        "keyType": {
+         "default": "shared",
+         "description": "KeyType is either 'shared' or 'sas' and the default is 'shared'",
+         "enum": [
+          "shared",
+          "sas"
+         ],
+         "type": "string"
+        },
+        "repoPath": {
+         "default": "/",
+         "description": "RepoPath describes the path to where backups and archive are stored",
+         "type": "string"
+        },
+        "secret": {
+         "additionalProperties": false,
+         "description": "Secret describes the secret that'll be used to access provided Azure containers",
+         "properties": {
+          "name": {
+           "default": "",
+           "description": "Name of the referent.\nThis field is effectively required, but due to backwards compatibility is\nallowed to be empty. Instances of this type with an empty value here are\nalmost certainly wrong.\nMore info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names",
+           "type": "string"
+          }
+         },
+         "type": "object"
+        }
+       },
+       "required": [
+        "container",
+        "secret"
+       ],
+       "type": "object"
+      },
+      "gcs": {
+       "additionalProperties": false,
+       "description": "GCP describes the configuration for GCP backups",
+       "properties": {
+        "bucket": {
+         "description": "Bucket describes the location in which backups will be stored",
+         "type": "string"
+        },
+        "caBundle": {
+         "description": "CABundle is a PEM encoded CA bundle which will be used to validate the GCS endpoint certificate",
+         "type": "string"
+        },
+        "enableSSL": {
+         "default": true,
+         "description": "EnableSSL forces GCS server validation",
+         "type": "boolean"
+        },
+        "endpoint": {
+         "default": "storage.googleapis.com",
+         "description": "Endpoint describes the GCS endpoint to be used for backup.",
+         "type": "string"
+        },
+        "repoPath": {
+         "default": "/",
+         "description": "RepoPath describes the path to where backups and archive are stored",
+         "type": "string"
+        },
+        "secret": {
+         "additionalProperties": false,
+         "description": "Secret describes the secret that'll be used to access provided GCS containers",
+         "properties": {
+          "name": {
+           "default": "",
+           "description": "Name of the referent.\nThis field is effectively required, but due to backwards compatibility is\nallowed to be empty. Instances of this type with an empty value here are\nalmost certainly wrong.\nMore info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names",
+           "type": "string"
+          }
+         },
+         "type": "object"
+        }
+       },
+       "required": [
+        "bucket",
+        "secret"
+       ],
+       "type": "object"
+      },
+      "pvc": {
+       "additionalProperties": false,
+       "description": "Pvc describes the configuration for PVC based backups",
+       "properties": {
+        "keepAfterDelete": {
+         "description": "KeepAfterDelete describes whether the PVC should be kept once Postgres instance is deleted",
+         "type": "boolean"
+        },
+        "storageClassName": {
+         "description": "StorageClassName describes StorageClass to use for dynamically provisioning Persistent Volumes\n(PVs) for a Postgres data pod during backup",
+         "type": "string"
+        },
+        "storageSize": {
+         "description": "StorageSize describes the size of the Persistent Volume Claim (PVC) for a Postgres data pod during backup",
+         "oneOf": [
+          {
+           "type": "string"
+          },
+          {
+           "type": "integer"
+          }
+         ]
+        },
+        "volumeSnapshotClassName": {
+         "description": "VolumeSnapshotClassName describes VolumeSnapshotClass that specifies storage provider-specific parameters\nto use when taking a snapshot",
+         "type": "string"
+        }
+       },
+       "required": [
+        "storageSize"
+       ],
+       "type": "object"
+      },
+      "s3": {
+       "additionalProperties": false,
+       "description": "S3 describes the configuration for S3 backups",
+       "properties": {
+        "bucket": {
+         "description": "Bucket describes the location in which backups will be stored",
+         "type": "string"
+        },
+        "bucketPath": {
+         "default": "/",
+         "description": "BucketPath describes the path where backups and archive are stored",
+         "type": "string"
+        },
+        "caBundle": {
+         "description": "CABundle is a PEM encoded CA bundle which will be used to validate the S3 endpoint certificate",
+         "type": "string"
+        },
+        "enableSSL": {
+         "default": true,
+         "description": "EnableSSL forces S3 server validation",
+         "type": "boolean"
+        },
+        "endpoint": {
+         "description": "Endpoint describes the S3 endpoint to be used for backup",
+         "type": "string"
+        },
+        "forcePathStyle": {
+         "description": "ForcePathStyle forces the use of path-style addressing for s3 operations",
+         "type": "boolean"
+        },
+        "region": {
+         "default": "us-east-1",
+         "type": "string"
+        },
+        "secret": {
+         "additionalProperties": false,
+         "description": "Secret describes the secret that'll be used to access provided s3 bucket",
+         "properties": {
+          "name": {
+           "default": "",
+           "description": "Name of the referent.\nThis field is effectively required, but due to backwards compatibility is\nallowed to be empty. Instances of this type with an empty value here are\nalmost certainly wrong.\nMore info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names",
+           "type": "string"
+          }
+         },
+         "type": "object"
+        }
+       },
+       "required": [
+        "bucket",
+        "endpoint",
+        "secret"
+       ],
+       "type": "object"
+      }
+     },
+     "type": "object"
+    }
+   },
+   "type": "object"
+  },
+  "status": {
+   "additionalProperties": false,
+   "description": "PostgresBackupLocationStatus defines the observed state of PostgresBackupLocation",
+   "properties": {
+    "currentSecretResourceVersion": {
+     "description": "CurrentSecretResourceVersion tracks the last observed version of the Secret referenced by spec.storage.*.secret",
+     "type": "string"
+    }
+   },
+   "type": "object"
+  }
+ },
+ "type": "object"
+}

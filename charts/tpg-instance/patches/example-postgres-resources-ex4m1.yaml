@@ -1,0 +1,21 @@
+# Example postgres patch file (tpg-patch and tpg-create-instance postgresPatchFilePath),
+# as the workflows store it: <name>-<uid>.yaml, referenced by clusters/fleet.example.yaml.
+# Write the same content in a file on the machine that submits the run and pass its
+# path; the workflow stores it here under its own name plus a 5-character UID.
+# A partial Postgres manifest: apiVersion sql.tanzu.vmware.com/v1, kind Postgres
+# and a spec fragment (checked against the Postgres CRD). The chart merges spec
+# into the rendered Postgres object of every instance whose current postgres
+# patch is this file: maps key by key, any other value (including false, 0 and
+# "") replaces the rendered one, a list replaces the whole list, null removes a key.
+# tpg-patch refuses spec.postgresVersion (tpg-upgrade), spec.highAvailability
+# (tpg-scale-instance), spec.storageClassName and a smaller storageSize or
+# walStorageSize.
+apiVersion: sql.tanzu.vmware.com/v1
+kind: Postgres
+spec:
+  resources:
+    data:
+      requests:
+        memory: 4Gi
+      limits:
+        memory: 8Gi

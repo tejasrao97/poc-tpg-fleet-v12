@@ -1,0 +1,83 @@
+# Defaults the operator applies itself, which the CRD schemas do not declare.
+#
+# tools/crd-defaults/generate.py reads the 9 CRDs in source-crds/ and takes
+# every field whose schema default is false, 0, [] or {} ("schema" entries of
+# the registry). The fields below have no schema default, but the Tanzu for
+# Postgres 4.5 documentation gives a zero default for them (or the operator
+# treats an absent field as its zero value), so they are skipped the same way
+# when a rendered object carries that value ("docs" entries).
+#
+#   skip           path (relative to spec) and the zero default; the field is
+#                  left out of the rendered object when it holds that value
+#   dropWhenEqual  an object that is left out as a whole when it equals the
+#                  given value: used where the zero field itself is required by
+#                  the schema (it cannot be left out alone) or where leaving it
+#                  out alone would select a non-zero schema default
+#   embeds         kinds that carry another kind's spec: the entries of that
+#                  kind are repeated under the given path
+#
+# The generator refuses an entry whose path is not in the schema, whose field
+# is required without a schema default, or whose schema default differs.
+kinds:
+  Postgres:
+    skip:
+      - path: highAvailability.enabled
+        default: false
+        source: "docs: Postgres CRD API Reference, highAvailability.enabled (Default: false, single node)"
+      - path: highAvailability.readReplicas
+        default: 0
+        source: "docs: Postgres CRD API Reference, highAvailability.readReplicas (Default: 0)"
+      - path: dataPodConfig.tolerations
+        default: []
+        source: "docs: Postgres CRD API Reference, dataPodConfig.tolerations (Default: [])"
+      - path: dataPodConfig.env
+        default: []
+        source: "docs: Postgres CRD API Reference, dataPodConfig.env (Default: [])"
+      - path: serviceAnnotations
+        default: {}
+        source: "docs: Postgres CRD API Reference, serviceAnnotations (Default: n/a)"
+      - path: readOnlyServiceAnnotations
+        default: {}
+        source: "docs: Postgres CRD API Reference, readOnlyServiceAnnotations (Default: n/a)"
+    dropWhenEqual:
+      - path: deploymentOptions
+        equals: {continuousRestoreTarget: false}
+        source: "docs: deploymentOptions.continuousRestoreTarget (Default: false); required by the schema inside deploymentOptions"
+  PostgresBackupLocation:
+    skip:
+      - path: additionalParameters
+        default: {}
+        source: "docs: Backup and Restore CRD API Reference, additionalParameters (Default: n/a); the API server stores no empty map (Round 9)"
+      - path: storage.azure.forcePathStyle
+        default: false
+        source: "docs: s3.forcePathStyle (Default: false); the API server stores no false for azure (Round 9)"
+      - path: storage.s3.forcePathStyle
+        default: false
+        source: "docs: Backup and Restore CRD API Reference, s3.forcePathStyle (Default: false)"
+      - path: storage.pvc.keepAfterDelete
+        default: false
+        source: "docs: Backup and Restore CRD API Reference, pvc.keepAfterDelete (Default: false)"
+  PostgresRestore:
+    skip:
+      - path: pitr.bestEffort
+        default: false
+        source: "docs: Backup and Restore CRD API Reference, pitr.bestEffort (Default: false)"
+    embeds:
+      targetInstance.spec: Postgres
+  PostgresMigration:
+    skip:
+      - path: instances
+        default: []
+        source: "docs: Postgres Migration CRD API Reference, instances (an empty list migrates nothing)"
+  PostgresFerretDocumentDB:
+    skip:
+      - path: service.serviceAnnotations
+        default: {}
+        source: "docs: Using FerretDB, service.readWriteServiceAnnotations (optional)"
+      - path: service.readOnlyServiceAnnotations
+        default: {}
+        source: "docs: Using FerretDB, service.readOnlyServiceAnnotations (optional)"
+    dropWhenEqual:
+      - path: readOnly
+        equals: {replicas: 0}
+        source: "docs: Using FerretDB, readOnly.replicas (Default: 0, the readOnly section is optional); the schema default is 1, so the section is left out as a whole"

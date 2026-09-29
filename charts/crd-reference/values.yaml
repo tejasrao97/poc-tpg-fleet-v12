@@ -1,0 +1,66 @@
+# Reference chart of the 9 Tanzu for Postgres 4.5 custom resources. No Argo CD
+# Application points at this chart and nothing installs it: it documents every
+# field and its default (the table at the top of each template), and renders an
+# object the way the fleet does - fields holding their zero default left out
+# (tpg.prune, design decision D69). tests/crd-reference renders it to compare
+# the objects the workflow scripts write inline with these templates.
+#
+# Every kind is off. Set <kind>.enabled, <kind>.name and <kind>.spec, or use an
+# example (the 4.5 documentation samples, adapted to the fleet names):
+#   helm template ref charts/crd-reference -f charts/crd-reference/examples/postgresBackup.yaml
+#   helm template ref charts/crd-reference --set postgresBackup.enabled=true \
+#     --set postgresBackup.name=orders-db-full --set postgresBackup.spec.sourceInstance.name=orders-db
+postgres:
+  enabled: false
+  name: ""
+  labels: {}
+  annotations: {}
+  spec: {}
+postgresBackupLocation:
+  enabled: false
+  name: ""
+  labels: {}
+  annotations: {}
+  spec: {}
+postgresBackup:
+  enabled: false
+  name: ""
+  labels: {}
+  annotations: {}
+  spec: {}
+postgresBackupSchedule:
+  enabled: false
+  name: ""
+  labels: {}
+  annotations: {}
+  spec: {}
+postgresRestore:
+  enabled: false
+  name: ""
+  labels: {}
+  annotations: {}
+  spec: {}
+postgresMigration:
+  enabled: false
+  name: ""
+  labels: {}
+  annotations: {}
+  spec: {}
+postgresVersion:
+  enabled: false
+  name: ""
+  labels: {}
+  annotations: {}
+  spec: {}
+postgresVersionUpgrade:
+  enabled: false
+  name: ""
+  labels: {}
+  annotations: {}
+  spec: {}
+postgresFerretDocumentDB:
+  enabled: false
+  name: ""
+  labels: {}
+  annotations: {}
+  spec: {}

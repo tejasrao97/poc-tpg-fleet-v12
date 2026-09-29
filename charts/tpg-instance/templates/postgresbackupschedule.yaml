@@ -1,0 +1,40 @@
+{{- /*
+PostgresBackupSchedule objects of the instance (design decision D70), rendered
+only when backup.operatorSchedules is set: tpg-day0 and tpg-create-instance
+with backupSchedule=operator (inputs operatorFullSchedule and
+operatorIncrementalSchedule), or a tpg-patch values file.
+
+  <instance>-backup-full         full backups on operatorSchedules.full
+  <instance>-backup-incremental  incremental backups on operatorSchedules.incremental
+                                 (not rendered when that entry is empty or absent)
+
+The operator creates a PostgresBackup at each cron time (UTC, the operator's
+clock), so the instance must be out of the CronWorkflows: backup.scheduled
+false, or the render fails. tpg-backup-retention expires these backups by chain
+like any other. Sync wave 2: created after the instance (wave 1) is Healthy.
+Field defaults: charts/crd-reference/templates/postgresBackupSchedule.yaml.
+*/ -}}
+{{- with (include "tpg.ctx" . | fromYaml) }}
+{{- $b := .Values.backup }}
+{{- $s := default dict $b.operatorSchedules }}
+{{- if $s }}
+{{- if ne (toString $b.scheduled) "false" }}{{ fail "backup.operatorSchedules needs backup.scheduled: false: the CronWorkflows would back the instance up as well (backupSchedule=operator sets both)" }}{{ end }}
+{{- if not $s.full }}{{ fail "backup.operatorSchedules.full is required: the cron schedule of the full backups, for example \"0 0 * * 0\"" }}{{ end }}
+{{- $name := .Values.instance.name }}
+{{- range $type := list "full" "incremental" }}
+{{- $cron := toString (default "" (get $s $type)) }}
+{{- if $cron }}
+{{- if not (regexMatch "^[0-9*/,A-Za-z-]+( +[0-9*/,A-Za-z-]+){4}$" $cron) }}{{ fail (printf "backup.operatorSchedules.%s %q is not a cron schedule of 5 fields (minute hour day month weekday)" $type $cron) }}{{ end }}
+{{- $obj := dict "apiVersion" "sql.tanzu.vmware.com/v1" "kind" "PostgresBackupSchedule"
+      "metadata" (dict "name" (printf "%s-backup-%s" $name $type)
+                       "labels" (dict "tpg.fleet/instance" $name "tpg.fleet/backup-type" $type)
+                       "annotations" (dict "argocd.argoproj.io/sync-wave" "2"))
+      "spec" (dict "schedule" $cron
+                   "backupTemplate" (dict "spec" (dict "sourceInstance" (dict "name" $name) "type" $type))) }}
+{{- $_ := include "tpg.prune" (dict "obj" $obj "root" $) }}
+---
+{{ toYaml $obj }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

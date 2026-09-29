@@ -1,0 +1,9 @@
+# Example for charts/crd-reference (the 4.5 documentation sample, adapted to the
+# fleet names). Render it with:
+#   helm template ref charts/crd-reference -f charts/crd-reference/examples/postgresVersionUpgrade.yaml
+postgresVersionUpgrade:
+  enabled: true
+  name: orders-db-upgrade
+  spec:
+    postgresInstance: {name: orders-db}
+    postgresVersion: {name: postgres-18.1}

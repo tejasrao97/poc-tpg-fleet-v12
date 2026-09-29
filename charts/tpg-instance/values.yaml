@@ -1,0 +1,129 @@
+# Chart defaults. The tpg-instances ApplicationSet adds clusters/_template/cluster.yaml,
+# clusters/_template/instance.yaml and the clusters/fleet.yaml overrides on top.
+cluster:
+  # Set by the tpg-instances ApplicationSet (informational)
+  name: ""
+
+instance:
+  name: ""
+  postgresVersion: ""
+  storageClassName: tpg-data-retain
+  storageSize: 20Gi
+  walStorageSize: 10Gi
+  # Service exposure (design decision D64): clusterIP | internalLoadBalancer | loadBalancer.
+  # Replaces instance.serviceType. Empty maps and lists are not rendered.
+  exposure: clusterIP
+  serviceAnnotations: {}
+  readOnlyExposure: clusterIP
+  readOnlyServiceAnnotations: {}
+  # Both load balancer Services: azure-allowed-ip-ranges (CIDRs)
+  allowedSourceRanges: []
+  # internalLoadBalancer: a subnet of the cluster VNet (empty: the node subnet)
+  internalLoadBalancerSubnet: ""
+  highAvailability:
+    enabled: true
+    readReplicas: 1
+  resources:
+    data:
+      requests:
+        cpu: "1"
+        memory: 2Gi
+      limits:
+        cpu: "2"
+        memory: 4Gi
+
+backup:
+  container: ""
+  endpoint: blob.core.windows.net
+  fullRetention: 4
+  diffRetention: 6
+  # Used by the tpg-backup-retention workflow, not by the chart
+  retentionDays: 35
+  # PostgresBackupLocation spec.storage.azure.
+  # enableSSL: false (default) talks plain HTTP to Azure Blob, true uses HTTPS.
+  # false needs a storage account that accepts HTTP: Terraform
+  # backup_storage_https_only = false (the default), or "Secure transfer
+  # required" off on a pre-created account (the preflight checks it). Set it per
+  # cluster (clusters.<cluster>.backup.enableSSL) or per instance
+  # (clusters.<cluster>.instances.<instance>.backup.enableSSL) in
+  # clusters/fleet.yaml, or with the tpg-day0 input backupEnableSSL. It is
+  # always written, so the operator sees the value that was chosen; the
+  # tpg-instances ApplicationSet ignores the field because the CRD drops false
+  # when the operator writes the object back.
+  # forcePathStyle, caBundle and additionalParameters are written only when set,
+  # because the CRD drops the zero value and the Application would never reach
+  # Synced otherwise.
+  enableSSL: false
+  forcePathStyle: false
+  caBundle: ""
+  # spec.additionalParameters: extra pgBackRest settings, for example
+  # {process-max: "4"}. Empty means the key is not written at all.
+  additionalParameters: {}
+  # Backup scheduler (design decision D70). scheduled true: the CronWorkflows
+  # tpg-backup-full and tpg-backup-incr back the instance up. operatorSchedules
+  # (tpg-day0 / tpg-create-instance backupSchedule=operator, or a tpg-patch
+  # values file) renders PostgresBackupSchedule objects instead and needs
+  # scheduled false, so the instance is never backed up by both:
+  #   operatorSchedules: {full: "0 0 * * 0", incremental: "0 0 * * 1-6"}
+  # An empty or absent incremental entry renders the full schedule only.
+  scheduled: true
+  operatorSchedules: {}
+
+# FerretDB (MongoDB wire protocol on port 27017, PostgresFerretDocumentDB, Tech
+# Preview in operator 4.5; design decision D71). Rendered only when enabled
+# (tpg-day0 / tpg-create-instance input ferret, or a tpg-patch values file).
+# Needs Postgres 17.5 or later and the documentdb extension, which the DBA
+# prepares by hand (extensions are out of scope). readOnlyReplicas above 0
+# needs highAvailability (the read-only proxies connect to the standby); 0
+# renders no readOnly section. The Services follow exposure with the
+# instance's allowedSourceRanges and internalLoadBalancerSubnet.
+ferret:
+  enabled: false
+  replicas: 1
+  readOnlyReplicas: 0
+  exposure: clusterIP
+  # Connection Secrets the operator creates for the instance; empty means
+  # <instance>-app-user-db-secret and <instance>-read-only-user-db-secret
+  secretName: ""
+  readOnlySecretName: ""
+
+# Values merged after the values patch files (tpg.ctx), so they win over them.
+# Written by tpg-restore only: an instance restored to another cluster copies
+# the source entry with its patch references but gets no FerretDB (D71), so
+# restore.sh writes valuesOverride.ferret.enabled false when a copied values
+# patch turns FerretDB on. A values patch may not set it.
+valuesOverride: {}
+
+# Vault Secrets Operator: credentials in the instance namespace
+# (templates/vault-secrets.yaml). The VaultAuth is created on every target by
+# helm-addons.sh (component vso).
+vault:
+  authRef: tpg-vault/tpg-vault
+  mount: tpg
+  refreshAfter: 60s
+
+registry:
+  host: tanzu-sql-postgres.packages.broadcom.com
+
+# Network policy of the instance namespace (design decision D65, tpg-network-policy).
+# policy none renders nothing. baseline renders
+#   NetworkPolicy tpg-ingress        default deny for ingress, then the flows the
+#                                    instance needs and the client rules below
+#   CiliumNetworkPolicy tpg-egress   default deny for egress, then the flows the
+#                                    instance needs and the egress rules below
+# An empty list or map renders no rule: an empty peer list would allow every
+# source (F9), so a rule exists only for a non-empty input.
+network:
+  policy: none
+  ingressFromNamespaces: []
+  ingressFromPodLabels: {}
+  ingressFromCidrs: []
+  egressToCidrs: []
+  egressToFqdns: []
+  # Set by the workflows from tpg-settings acnsEnabled: backup egress by FQDN
+  # (*.blob.core.windows.net) instead of any address on 443/80
+  acns: false
+  # Namespaces allowed to scrape the metrics port 9187 (standalone: monitoring;
+  # Azure Monitor: kube-system, ama-metrics)
+  monitoringNamespaces: [monitoring, kube-system]
+  operatorNamespace: tanzu-postgres-operator

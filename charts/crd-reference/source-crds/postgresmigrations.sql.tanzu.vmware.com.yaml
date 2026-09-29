@@ -1,0 +1,90 @@
+# CustomResourceDefinition postgresmigrations.sql.tanzu.vmware.com as installed by the Tanzu for Postgres operator 4.5.0
+# (kubectl get crd postgresmigrations.sql.tanzu.vmware.com -o yaml on the lab cluster; volatile metadata and status removed).
+# Reference only: tools/crd-defaults/generate.py reads it. Never applied from here.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  labels:
+    app: postgres-operator
+  name: postgresmigrations.sql.tanzu.vmware.com
+spec:
+  conversion:
+    strategy: None
+  group: sql.tanzu.vmware.com
+  names:
+    categories:
+    - all
+    kind: PostgresMigration
+    listKind: PostgresMigrationList
+    plural: postgresmigrations
+    shortNames:
+    - pgmigr
+    singular: postgresmigration
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - description: The postgres migration status
+      jsonPath: .status.phase
+      name: Status
+      type: string
+    - description: The postgres migrated instances count
+      jsonPath: .status.migrated
+      name: Migrated
+      type: string
+    name: v1
+    schema:
+      openAPIV3Schema:
+        description: PostgresMigration is the Schema for the postgresmigrations API
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation of an object.
+
+              Servers should convert recognized schemas to the latest internal value, and
+
+              may reject unrecognized values.
+
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this object represents.
+
+              Servers may infer this from the endpoint the client submits requests to.
+
+              Cannot be updated.
+
+              In CamelCase.
+
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: PostgresMigrationSpec defines the desired state of PostgresMigration
+            properties:
+              instances:
+                description: Instances indicates list of instances to migrate
+                items:
+                  type: string
+                type: array
+              migrateAll:
+                default: false
+                description: MigrateAll indicates whether to migrate all instances
+                type: boolean
+            type: object
+          status:
+            description: PostgresMigrationStatus defines the observed state of PostgresMigration
+            properties:
+              migrated:
+                description: Migrated indicates the total instances that have been migrated
+                type: string
+              phase:
+                description: Phase indicates the status of the migration
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

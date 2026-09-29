@@ -1,0 +1,296 @@
+# CustomResourceDefinition postgresbackuplocations.sql.tanzu.vmware.com as installed by the Tanzu for Postgres operator 4.5.0
+# (kubectl get crd postgresbackuplocations.sql.tanzu.vmware.com -o yaml on the lab cluster; volatile metadata and status removed).
+# Reference only: tools/crd-defaults/generate.py reads it. Never applied from here.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  labels:
+    app: postgres-operator
+  name: postgresbackuplocations.sql.tanzu.vmware.com
+spec:
+  conversion:
+    strategy: None
+  group: sql.tanzu.vmware.com
+  names:
+    categories:
+    - all
+    kind: PostgresBackupLocation
+    listKind: PostgresBackupLocationList
+    plural: postgresbackuplocations
+    shortNames:
+    - pgbkpl
+    singular: postgresbackuplocation
+  scope: Namespaced
+  versions:
+  - name: v1
+    schema:
+      openAPIV3Schema:
+        description: PostgresBackupLocation is the Schema for the postgresbackuplocations API
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation of an object.
+
+              Servers should convert recognized schemas to the latest internal value, and
+
+              may reject unrecognized values.
+
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this object represents.
+
+              Servers may infer this from the endpoint the client submits requests to.
+
+              Cannot be updated.
+
+              In CamelCase.
+
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: PostgresBackupLocationSpec defines the desired state of PostgresBackupLocation
+            properties:
+              additionalParameters:
+                additionalProperties:
+                  type: string
+                type: object
+              backupIntegrityValidation:
+                properties:
+                  enabled:
+                    default: true
+                    description: Enabled specifies whether the Operator should periodically perform integrity checks on the
+                      contents of this backup location.
+                    type: boolean
+                required:
+                - enabled
+                type: object
+              backupSync:
+                properties:
+                  enabled:
+                    default: true
+                    description: 'Enabled specifies whether backups from different namespaces or clusters that use
+
+                      the same backup location config will be created in the current namespace'
+                    type: boolean
+                required:
+                - enabled
+                type: object
+              retentionPolicy:
+                properties:
+                  diffRetention:
+                    description: DiffRetention describes the retention policy for differential backups
+                    properties:
+                      number:
+                        description: Number is number of differential backups to retain
+                        type: integer
+                    type: object
+                  fullRetention:
+                    description: FullRetention describes the retention policy for full backups
+                    properties:
+                      number:
+                        description: Number is number of days for Type time or number of backups for Type count
+                        type: integer
+                      type:
+                        description: Type represents a time period (days) or count of full backups to keep
+                        enum:
+                        - count
+                        - time
+                        type: string
+                    type: object
+                type: object
+              storage:
+                properties:
+                  azure:
+                    description: Azure describes the configuration for Azure backups
+                    properties:
+                      caBundle:
+                        description: CABundle is a PEM encoded CA bundle which will be used to validate the Azure endpoint
+                          certificate
+                        type: string
+                      container:
+                        description: Container describes the Azure container storage in which the backups will be stored
+                        type: string
+                      enableSSL:
+                        default: true
+                        description: EnableSSL forces Azure server validation
+                        type: boolean
+                      endpoint:
+                        default: blob.core.windows.net
+                        description: Endpoint describes the endpoint used to connect to the blob service. Default is generally
+                          correct unless using Azure Government
+                        type: string
+                      forcePathStyle:
+                        description: ForcePathStyle forces the use of path-style addressing for azure operations
+                        type: boolean
+                      keyType:
+                        default: shared
+                        description: KeyType is either 'shared' or 'sas' and the default is 'shared'
+                        enum:
+                        - shared
+                        - sas
+                        type: string
+                      repoPath:
+                        default: /
+                        description: RepoPath describes the path to where backups and archive are stored
+                        type: string
+                      secret:
+                        description: Secret describes the secret that'll be used to access provided Azure containers
+                        properties:
+                          name:
+                            default: ''
+                            description: 'Name of the referent.
+
+                              This field is effectively required, but due to backwards compatibility is
+
+                              allowed to be empty. Instances of this type with an empty value here are
+
+                              almost certainly wrong.
+
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names'
+                            type: string
+                        type: object
+                        x-kubernetes-map-type: atomic
+                    required:
+                    - container
+                    - enableSSL
+                    - secret
+                    type: object
+                  gcs:
+                    description: GCP describes the configuration for GCP backups
+                    properties:
+                      bucket:
+                        description: Bucket describes the location in which backups will be stored
+                        type: string
+                      caBundle:
+                        description: CABundle is a PEM encoded CA bundle which will be used to validate the GCS endpoint certificate
+                        type: string
+                      enableSSL:
+                        default: true
+                        description: EnableSSL forces GCS server validation
+                        type: boolean
+                      endpoint:
+                        default: storage.googleapis.com
+                        description: Endpoint describes the GCS endpoint to be used for backup.
+                        type: string
+                      repoPath:
+                        default: /
+                        description: RepoPath describes the path to where backups and archive are stored
+                        type: string
+                      secret:
+                        description: Secret describes the secret that'll be used to access provided GCS containers
+                        properties:
+                          name:
+                            default: ''
+                            description: 'Name of the referent.
+
+                              This field is effectively required, but due to backwards compatibility is
+
+                              allowed to be empty. Instances of this type with an empty value here are
+
+                              almost certainly wrong.
+
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names'
+                            type: string
+                        type: object
+                        x-kubernetes-map-type: atomic
+                    required:
+                    - bucket
+                    - enableSSL
+                    - secret
+                    type: object
+                  pvc:
+                    description: Pvc describes the configuration for PVC based backups
+                    properties:
+                      keepAfterDelete:
+                        description: KeepAfterDelete describes whether the PVC should be kept once Postgres instance is deleted
+                        type: boolean
+                      storageClassName:
+                        description: 'StorageClassName describes StorageClass to use for dynamically provisioning Persistent
+                          Volumes
+
+                          (PVs) for a Postgres data pod during backup'
+                        type: string
+                      storageSize:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: StorageSize describes the size of the Persistent Volume Claim (PVC) for a Postgres data
+                          pod during backup
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                      volumeSnapshotClassName:
+                        description: 'VolumeSnapshotClassName describes VolumeSnapshotClass that specifies storage provider-specific
+                          parameters
+
+                          to use when taking a snapshot'
+                        type: string
+                    required:
+                    - storageSize
+                    type: object
+                  s3:
+                    description: S3 describes the configuration for S3 backups
+                    properties:
+                      bucket:
+                        description: Bucket describes the location in which backups will be stored
+                        type: string
+                      bucketPath:
+                        default: /
+                        description: BucketPath describes the path where backups and archive are stored
+                        type: string
+                      caBundle:
+                        description: CABundle is a PEM encoded CA bundle which will be used to validate the S3 endpoint certificate
+                        type: string
+                      enableSSL:
+                        default: true
+                        description: EnableSSL forces S3 server validation
+                        type: boolean
+                      endpoint:
+                        description: Endpoint describes the S3 endpoint to be used for backup
+                        type: string
+                      forcePathStyle:
+                        description: ForcePathStyle forces the use of path-style addressing for s3 operations
+                        type: boolean
+                      region:
+                        default: us-east-1
+                        type: string
+                      secret:
+                        description: Secret describes the secret that'll be used to access provided s3 bucket
+                        properties:
+                          name:
+                            default: ''
+                            description: 'Name of the referent.
+
+                              This field is effectively required, but due to backwards compatibility is
+
+                              allowed to be empty. Instances of this type with an empty value here are
+
+                              almost certainly wrong.
+
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names'
+                            type: string
+                        type: object
+                        x-kubernetes-map-type: atomic
+                    required:
+                    - bucket
+                    - enableSSL
+                    - endpoint
+                    - secret
+                    type: object
+                type: object
+            type: object
+          status:
+            description: PostgresBackupLocationStatus defines the observed state of PostgresBackupLocation
+            properties:
+              currentSecretResourceVersion:
+                description: CurrentSecretResourceVersion tracks the last observed version of the Secret referenced by spec.storage.*.secret
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

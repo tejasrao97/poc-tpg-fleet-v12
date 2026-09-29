@@ -1,0 +1,129 @@
+{
+ "additionalProperties": false,
+ "description": "PostgresVersionUpgrade is the Schema for the postgresversionupgrades API",
+ "properties": {
+  "apiVersion": {
+   "description": "APIVersion defines the versioned schema of this representation of an object.\nServers should convert recognized schemas to the latest internal value, and\nmay reject unrecognized values.\nMore info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources",
+   "type": "string"
+  },
+  "kind": {
+   "description": "Kind is a string value representing the REST resource this object represents.\nServers may infer this from the endpoint the client submits requests to.\nCannot be updated.\nIn CamelCase.\nMore info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds",
+   "type": "string"
+  },
+  "metadata": {
+   "type": "object"
+  },
+  "spec": {
+   "additionalProperties": false,
+   "description": "PostgresVersionUpgradeSpec defines the desired state of PostgresVersionUpgrade",
+   "properties": {
+    "omitBackup": {
+     "default": false,
+     "description": "OmitBackup provides the option to opt out of backup when performing major version upgrades",
+     "type": "boolean"
+    },
+    "postgresInstance": {
+     "additionalProperties": false,
+     "description": "PostgresInstance references the target instance which should be upgraded",
+     "properties": {
+      "name": {
+       "default": "",
+       "description": "Name of the referent.\nThis field is effectively required, but due to backwards compatibility is\nallowed to be empty. Instances of this type with an empty value here are\nalmost certainly wrong.\nMore info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names",
+       "type": "string"
+      }
+     },
+     "type": "object"
+    },
+    "postgresVersion": {
+     "additionalProperties": false,
+     "description": "PostgresVersion references the version to upgrade the target instance to",
+     "properties": {
+      "name": {
+       "default": "",
+       "description": "Name of the referent.\nThis field is effectively required, but due to backwards compatibility is\nallowed to be empty. Instances of this type with an empty value here are\nalmost certainly wrong.\nMore info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names",
+       "type": "string"
+      }
+     },
+     "type": "object"
+    },
+    "versionJobUpgradeStorageClassName": {
+     "description": "VersionUpgradeJobStorageClassName describes StorageClass to use for dynamically provisioning Persistent Volumes for postgres binary\n(PVs) for a Postgres Binary for Version Upgrade Job",
+     "type": "string"
+    },
+    "versionPreUpgradeJobStorageClassName": {
+     "description": "VersionPreUpgradeJobStorageClassName describes StorageClass to use for dynamically provisioning Persistent Volumes for postgres binary\n(PVs) for a Postgres Binary for Version PreUpgrade Job",
+     "type": "string"
+    }
+   },
+   "required": [
+    "postgresInstance",
+    "postgresVersion"
+   ],
+   "type": "object"
+  },
+  "status": {
+   "additionalProperties": false,
+   "description": "PostgresVersionUpgradeStatus defines the observed state of PostgresVersionUpgrade",
+   "properties": {
+    "desiredHighAvailabilityConfig": {
+     "additionalProperties": false,
+     "description": "DesiredHighAvailabilityConfig is an internal state field that indicates the final HA configuration",
+     "properties": {
+      "enabled": {
+       "description": "Enabled specifies whether the Postgres instance is created in a single or cluster mode configuration.\nBy default, false is used",
+       "type": "boolean"
+      },
+      "podDisruptionBudget": {
+       "additionalProperties": false,
+       "description": "PodDisruptionBudget holds the settings related to Pod Disruption Budget",
+       "properties": {
+        "enabled": {
+         "default": false,
+         "description": "Enabled specifies whether the Pod Disruption Budget should be enabled for the instance",
+         "type": "boolean"
+        }
+       },
+       "type": "object"
+      },
+      "readReplicas": {
+       "description": "ReadReplicas specifies the number of read replicas to create when HA mode is enabled",
+       "type": "integer"
+      }
+     },
+     "type": "object"
+    },
+    "message": {
+     "description": "Message provides details about the current status of the PostgresVersionUpgrade.",
+     "type": "string"
+    },
+    "phase": {
+     "description": "Phase indicates the status of the upgrade.",
+     "type": "string"
+    },
+    "preCheckErrors": {
+     "description": "PreCheckErrors provides details about the precheck errors for the given the PostgresVersionUpgrade.",
+     "type": "string"
+    },
+    "preCheckStatus": {
+     "description": "PreCheckStatus provides details about the precheck status of the PostgresVersionUpgrade.",
+     "type": "string"
+    },
+    "timeCompleted": {
+     "description": "TimeCompleted indicates the time that this PostgresVersionUpgrade completed or failed.",
+     "format": "date-time",
+     "type": "string"
+    },
+    "timeStarted": {
+     "description": "TimeStarted indicates the time that this PostgresVersionUpgrade was started.",
+     "format": "date-time",
+     "type": "string"
+    }
+   },
+   "type": "object"
+  }
+ },
+ "required": [
+  "spec"
+ ],
+ "type": "object"
+}

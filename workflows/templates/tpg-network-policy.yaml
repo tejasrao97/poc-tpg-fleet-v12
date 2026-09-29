@@ -1,0 +1,283 @@
+# Day 1: create, update or remove the network policy of Postgres instances
+# (design decision D65). Targets: clusterMap (rules per instance) or the
+# instances list on every cluster of the clusters list. The rules are written to
+# clusters/fleet.yaml (clusters.<c>.instances.<i>.network) in one commit and the
+# tpg-instance chart renders them, so Argo CD owns the policies:
+#   NetworkPolicy tpg-ingress        default deny for ingress + the flows the
+#                                    instance needs + the client rules
+#   CiliumNetworkPolicy tpg-egress   default deny for egress + the flows the
+#                                    instance needs + the egress rules
+# Each cluster is dry-run first (a cluster that fails is BLOCKED and not
+# written); after the sync, WAL archiving to the backup storage and a probe pod
+# check that the policy lets through what it should and blocks the rest. The
+# last step (blocked-gate) fails the run when a cluster was BLOCKED, after the
+# other clusters were applied (design decision D61).
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: tpg-network-policy
+  namespace: argo
+  annotations:
+    workflows.argoproj.io/description: >-
+      Day 1: apply, update or remove the network policy (NetworkPolicy for ingress,
+      CiliumNetworkPolicy for egress) of Postgres instances, through clusters/fleet.yaml
+      and Argo CD, then check WAL archiving and client connectivity.
+spec:
+  serviceAccountName: tpg-workflow
+  podMetadata:
+    annotations:
+      vault.hashicorp.com/agent-inject: "true"
+      vault.hashicorp.com/agent-pre-populate-only: "true"
+      vault.hashicorp.com/agent-init-first: "true"
+      vault.hashicorp.com/agent-configmap: tpg-vault-agent
+      vault.hashicorp.com/tls-secret: vault-ca
+  entrypoint: main
+  onExit: exit-handler
+  parallelism: 10
+  arguments:
+    parameters:
+    # ---- targets: clusters and instances, or clusterMap (one of the two)
+    - name: clusters
+      description: "List: comma-separated registered clusters (without clusterMap)"
+      value: ""
+    - name: instances
+      description: "List: instances on every listed cluster; each must be declared there (without clusterMap)"
+      value: ""
+    - name: clusterMap
+      description: "Map (YAML or JSON): cluster -> {instances: {instance -> {ingressFromNamespaces, ingressFromPodLabels, ingressFromCidrs, egressToCidrs, egressToFqdns, postgresVersion (guard)}}}; the inputs below are the defaults"
+      value: ""
+    # ---- mandatory
+    - name: mode
+      description: "apply: baseline policy with exactly these rules; update: change only the rules given; remove: delete both policies"
+      value: ""
+      enum: ["", "apply", "update", "remove"]
+    - name: pushMode
+      description: "direct: push to the fleet branch; pr: open a pull request and continue after it is merged"
+      value: ""
+      enum: ["", "direct", "pr"]
+    # ---- optional: the rules
+    - name: ingressFromNamespaces
+      description: "List: namespaces whose pods may connect on 5432"
+      value: ""
+    - name: ingressFromPodLabels
+      description: "Map (YAML or JSON): pod labels allowed to connect on 5432 (in ingressFromNamespaces, or any namespace)"
+      value: ""
+    - name: ingressFromCidrs
+      description: "List: CIDRs allowed to connect on 5432 (clients outside the cluster, through a load balancer)"
+      value: ""
+    - name: egressToCidrs
+      description: "List: extra CIDRs the instance pods may reach"
+      value: ""
+    - name: egressToFqdns
+      description: "List: host names the instance pods may reach (CiliumNetworkPolicy toFQDNs; needs ACNS)"
+      value: ""
+    - name: connectivityCheck
+      description: "true: after the sync, check WAL archiving and run probe pods (an allowed namespace, and default)"
+      value: "true"
+      enum: ["true", "false"]
+    - name: maxParallel
+      value: "2"
+    - name: rolloutMode
+      description: "canary: one wave-0 cluster first, then batches of maxParallel; batches: no canary; all: every cluster at once"
+      value: canary
+      enum: ["canary", "batches", "all"]
+    - name: dryRun
+      description: "true: plan and dry-run the policies on each cluster; push and sync nothing"
+      value: "false"
+      enum: ["false", "true"]
+    - name: timeoutSeconds
+      value: "900"
+    - name: prTimeoutSeconds
+      value: "3600"
+    - name: toolsImage
+      value: alpine/k8s:1.35.8
+  volumes:
+    - name: scripts
+      configMap:
+        name: tpg-scripts
+        defaultMode: 0755
+  templates:
+  - name: main
+    steps:
+    - - name: validate
+        template: validate
+    - - name: init
+        templateRef:
+          name: tpg-lib
+          template: init-run
+    - - name: discover
+        templateRef:
+          name: tpg-lib
+          template: discover
+        arguments:
+          parameters:
+            - name: clusters
+              value: "{{steps.validate.outputs.parameters.selection}}"
+            - name: filter
+              value: "pairs"
+            - name: instances
+              value: "{{workflow.parameters.instances}}"
+            - name: clusterMap
+              value: "{{workflow.parameters.clusterMap}}"
+    - - name: plan
+        template: plan
+    - - name: batches
+        templateRef:
+          name: tpg-lib
+          template: plan-batches
+        arguments:
+          parameters:
+            - name: requirePrecheck
+              value: "true"
+            - name: maxParallel
+              value: "{{workflow.parameters.maxParallel}}"
+            - name: rolloutMode
+              value: "{{workflow.parameters.rolloutMode}}"
+    - - name: apply
+        template: run-batches
+        when: "{{workflow.parameters.dryRun}} == false && {{steps.batches.outputs.parameters.hasBatches}} == true"
+        arguments:
+          parameters:
+            - name: batches
+              value: "{{steps.batches.outputs.parameters.batches}}"
+    - - name: gate
+        templateRef:
+          name: tpg-lib
+          template: blocked-gate
+  - name: validate
+    metadata:
+      annotations:
+        vault.hashicorp.com/agent-inject: "false"
+    outputs:
+      parameters:
+        - name: clusters
+          valueFrom:
+            path: /tmp/clusters.json
+            default: "[]"
+        - name: selection
+          valueFrom:
+            path: /tmp/selection
+            default: ""
+    container:
+      image: "{{workflow.parameters.toolsImage}}"
+      command: [bash, /scripts/validate-params.sh, network-policy]
+      env:
+        - {name: P_CLUSTER_MAP, value: "{{workflow.parameters.clusterMap}}"}
+        - {name: P_CLUSTERS, value: "{{workflow.parameters.clusters}}"}
+        - {name: P_INSTANCES, value: "{{workflow.parameters.instances}}"}
+        - {name: P_NP_MODE, value: "{{workflow.parameters.mode}}"}
+        - {name: P_PUSH_MODE, value: "{{workflow.parameters.pushMode}}"}
+        - {name: P_INGRESS_FROM_NAMESPACES, value: "{{workflow.parameters.ingressFromNamespaces}}"}
+        - {name: P_INGRESS_FROM_POD_LABELS, value: "{{workflow.parameters.ingressFromPodLabels}}"}
+        - {name: P_INGRESS_FROM_CIDRS, value: "{{workflow.parameters.ingressFromCidrs}}"}
+        - {name: P_EGRESS_TO_CIDRS, value: "{{workflow.parameters.egressToCidrs}}"}
+        - {name: P_EGRESS_TO_FQDNS, value: "{{workflow.parameters.egressToFqdns}}"}
+        - {name: P_MAX_PARALLEL, value: "{{workflow.parameters.maxParallel}}"}
+        - {name: P_ROLLOUT_MODE, value: "{{workflow.parameters.rolloutMode}}"}
+        - {name: P_DRY_RUN, value: "{{workflow.parameters.dryRun}}"}
+        - {name: P_TIMEOUT, value: "{{workflow.parameters.timeoutSeconds}}"}
+        - {name: P_PR_TIMEOUT, value: "{{workflow.parameters.prTimeoutSeconds}}"}
+        - {name: CONNECTIVITY_CHECK, value: "{{workflow.parameters.connectivityCheck}}"}
+        - {name: TOOLS_IMAGE, value: "{{workflow.parameters.toolsImage}}"}
+      volumeMounts:
+        - name: scripts
+          mountPath: /scripts
+  - name: plan
+    container:
+      image: "{{workflow.parameters.toolsImage}}"
+      command: [bash, /scripts/network-policy.sh, plan]
+      args:
+        - "{{workflow.name}}"
+      env:
+        - {name: P_CLUSTER_MAP, value: "{{workflow.parameters.clusterMap}}"}
+        - {name: P_CLUSTERS, value: "{{workflow.parameters.clusters}}"}
+        - {name: P_INSTANCES, value: "{{workflow.parameters.instances}}"}
+        - {name: P_NP_MODE, value: "{{workflow.parameters.mode}}"}
+        - {name: P_PUSH_MODE, value: "{{workflow.parameters.pushMode}}"}
+        - {name: P_INGRESS_FROM_NAMESPACES, value: "{{workflow.parameters.ingressFromNamespaces}}"}
+        - {name: P_INGRESS_FROM_POD_LABELS, value: "{{workflow.parameters.ingressFromPodLabels}}"}
+        - {name: P_INGRESS_FROM_CIDRS, value: "{{workflow.parameters.ingressFromCidrs}}"}
+        - {name: P_EGRESS_TO_CIDRS, value: "{{workflow.parameters.egressToCidrs}}"}
+        - {name: P_EGRESS_TO_FQDNS, value: "{{workflow.parameters.egressToFqdns}}"}
+        - {name: P_MAX_PARALLEL, value: "{{workflow.parameters.maxParallel}}"}
+        - {name: P_ROLLOUT_MODE, value: "{{workflow.parameters.rolloutMode}}"}
+        - {name: P_DRY_RUN, value: "{{workflow.parameters.dryRun}}"}
+        - {name: P_TIMEOUT, value: "{{workflow.parameters.timeoutSeconds}}"}
+        - {name: P_PR_TIMEOUT, value: "{{workflow.parameters.prTimeoutSeconds}}"}
+        - {name: CONNECTIVITY_CHECK, value: "{{workflow.parameters.connectivityCheck}}"}
+        - {name: TOOLS_IMAGE, value: "{{workflow.parameters.toolsImage}}"}
+      volumeMounts:
+        - name: scripts
+          mountPath: /scripts
+  - name: run-batches
+    inputs:
+      parameters:
+        - name: batches
+    steps:
+    - - name: split
+        templateRef:
+          name: tpg-lib
+          template: split-first
+        arguments:
+          parameters:
+            - name: batches
+              value: "{{inputs.parameters.batches}}"
+    - - name: batch
+        template: apply-cluster
+        arguments:
+          parameters:
+            - name: cluster
+              value: "{{item}}"
+        withParam: "{{steps.split.outputs.parameters.first}}"
+    - - name: next
+        template: run-batches
+        when: "{{steps.split.outputs.parameters.hasRest}} == true"
+        arguments:
+          parameters:
+            - name: batches
+              value: "{{steps.split.outputs.parameters.rest}}"
+  - name: apply-cluster
+    inputs:
+      parameters:
+        - name: cluster
+    synchronization:
+      mutexes:
+        - name: "tpg-cluster-{{inputs.parameters.cluster}}"
+    container:
+      image: "{{workflow.parameters.toolsImage}}"
+      command: [bash, /scripts/network-policy.sh, apply]
+      args:
+        - "{{workflow.name}}"
+        - "{{inputs.parameters.cluster}}"
+        - "{{workflow.parameters.timeoutSeconds}}"
+      env:
+        - {name: P_CLUSTER_MAP, value: "{{workflow.parameters.clusterMap}}"}
+        - {name: P_CLUSTERS, value: "{{workflow.parameters.clusters}}"}
+        - {name: P_INSTANCES, value: "{{workflow.parameters.instances}}"}
+        - {name: P_NP_MODE, value: "{{workflow.parameters.mode}}"}
+        - {name: P_PUSH_MODE, value: "{{workflow.parameters.pushMode}}"}
+        - {name: P_INGRESS_FROM_NAMESPACES, value: "{{workflow.parameters.ingressFromNamespaces}}"}
+        - {name: P_INGRESS_FROM_POD_LABELS, value: "{{workflow.parameters.ingressFromPodLabels}}"}
+        - {name: P_INGRESS_FROM_CIDRS, value: "{{workflow.parameters.ingressFromCidrs}}"}
+        - {name: P_EGRESS_TO_CIDRS, value: "{{workflow.parameters.egressToCidrs}}"}
+        - {name: P_EGRESS_TO_FQDNS, value: "{{workflow.parameters.egressToFqdns}}"}
+        - {name: P_MAX_PARALLEL, value: "{{workflow.parameters.maxParallel}}"}
+        - {name: P_ROLLOUT_MODE, value: "{{workflow.parameters.rolloutMode}}"}
+        - {name: P_DRY_RUN, value: "{{workflow.parameters.dryRun}}"}
+        - {name: P_TIMEOUT, value: "{{workflow.parameters.timeoutSeconds}}"}
+        - {name: P_PR_TIMEOUT, value: "{{workflow.parameters.prTimeoutSeconds}}"}
+        - {name: CONNECTIVITY_CHECK, value: "{{workflow.parameters.connectivityCheck}}"}
+        - {name: TOOLS_IMAGE, value: "{{workflow.parameters.toolsImage}}"}
+      volumeMounts:
+        - name: scripts
+          mountPath: /scripts
+  - name: exit-handler
+    steps:
+    - - name: report
+        templateRef:
+          name: tpg-lib
+          template: report
+        arguments:
+          parameters:
+            - name: mode
+              value: steps

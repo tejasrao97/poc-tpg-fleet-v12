@@ -1,0 +1,80 @@
+# One operator Application per cluster: tpg-<cluster>-operator.
+#
+# Generated only for registered clusters (label tpg.fleet/managed=true) that
+# have clusters.<cluster>.operator.version in clusters/fleet.yaml. tpg-day0 and
+# tpg-upgrade (component=operator) write that version; tpg-delete-apps removes it.
+#
+# Two sources (multi-source Application):
+#   1. the operator chart from the Broadcom OCI registry, at the declared version
+#   2. the fleet repository as the reference "fleet", so the chart can take a value
+#      file from it: $fleet/patches/operator/clusters/<cluster>.yaml, the copy of the
+#      cluster's current operator values patch that tpg-patch writes (Round 14,
+#      D78; missing when the cluster has none, hence ignoreMissingValueFiles). The
+#      path is fixed so that a sync at the commit of a tpg-patch pull request branch
+#      (sync revisions, source position 2) reads that branch's values before the
+#      merge.
+# The sources are set by templatePatch, because they cannot be written as a
+# template string. The chart's own default dockerRegistrySecretName is regsecret;
+# a values patch may change it (valuesObject would override the value file, so
+# none is set here).
+#
+# Operator manifest patches (server-side apply as field manager tpg-patch) were
+# removed in Round 14 (D76): only the chart values of the allow-list change the
+# operator.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: tpg-operator
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - matrix:
+              generators:
+                - clusters:
+                    selector:
+                      matchLabels:
+                        tpg.fleet/managed: "true"
+                - git:
+                    repoURL: https://github.com/tejasrao97/poc-tpg-fleet-v12.git
+                    revision: main
+                    files:
+                      - path: clusters/fleet.yaml
+          - list:
+              # [{"operatorVersion": "<tag>"}] when the cluster declares a version, otherwise []
+              elementsYaml: >-
+                {{- $version := dig "clusters" .name "operator" "version" "" . -}}
+                {{- if $version -}}{{- toJson (list (dict "operatorVersion" $version)) -}}{{- else -}}[]{{- end -}}
+  template:
+    metadata:
+      name: "tpg-{{.name}}-operator"
+      labels:
+        tpg.fleet/cluster: "{{.name}}"
+        tpg.fleet/wave: '{{index .metadata.labels "tpg.fleet/wave"}}'
+        tpg.fleet/component: operator
+    spec:
+      project: tpg
+      destination:
+        server: "{{.server}}"
+        namespace: tanzu-postgres-operator
+      # No "automated" block by design: the workflows decide when to sync.
+      syncPolicy:
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+  templatePatch: |
+    spec:
+      sources:
+        - repoURL: tanzu-sql-postgres.packages.broadcom.com
+          chart: vmware-sql-postgres-operator
+          targetRevision: {{ .operatorVersion | quote }}
+          helm:
+            ignoreMissingValueFiles: true
+            valueFiles:
+              - {{ printf "$fleet/patches/operator/clusters/%s.yaml" .name | quote }}
+        - repoURL: https://github.com/tejasrao97/poc-tpg-fleet-v12.git
+          targetRevision: main
+          ref: fleet

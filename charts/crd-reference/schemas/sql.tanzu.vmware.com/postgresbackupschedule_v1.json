@@ -1,0 +1,91 @@
+{
+ "additionalProperties": false,
+ "description": "PostgresBackupSchedule is the Schema for the postgresbackupschedules API",
+ "properties": {
+  "apiVersion": {
+   "description": "APIVersion defines the versioned schema of this representation of an object.\nServers should convert recognized schemas to the latest internal value, and\nmay reject unrecognized values.\nMore info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources",
+   "type": "string"
+  },
+  "kind": {
+   "description": "Kind is a string value representing the REST resource this object represents.\nServers may infer this from the endpoint the client submits requests to.\nCannot be updated.\nIn CamelCase.\nMore info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds",
+   "type": "string"
+  },
+  "metadata": {
+   "type": "object"
+  },
+  "spec": {
+   "additionalProperties": false,
+   "description": "PostgresBackupScheduleSpec defines the desired state of PostgresBackupSchedule",
+   "properties": {
+    "backupTemplate": {
+     "additionalProperties": false,
+     "description": "BackupTemplate describes the backup specification template",
+     "properties": {
+      "spec": {
+       "additionalProperties": false,
+       "description": "PostgresBackupSpec defines the desired state of PostgresBackup",
+       "properties": {
+        "expire": {
+         "default": false,
+         "description": "Expire specifies if the backup should be expired from the stanza",
+         "type": "boolean"
+        },
+        "sourceInstance": {
+         "additionalProperties": false,
+         "description": "Instance specifies the postgres instance name that you want to backup",
+         "properties": {
+          "name": {
+           "default": "",
+           "description": "Name of the referent.\nThis field is effectively required, but due to backwards compatibility is\nallowed to be empty. Instances of this type with an empty value here are\nalmost certainly wrong.\nMore info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names",
+           "type": "string"
+          }
+         },
+         "type": "object"
+        },
+        "type": {
+         "default": "full",
+         "description": "Type describes the backup type to be taken",
+         "enum": [
+          "full",
+          "incremental",
+          "differential"
+         ],
+         "type": "string"
+        }
+       },
+       "required": [
+        "sourceInstance"
+       ],
+       "type": "object"
+      }
+     },
+     "required": [
+      "spec"
+     ],
+     "type": "object"
+    },
+    "schedule": {
+     "description": "Schedule describes when the backup should be scheduled in cron time syntax",
+     "type": "string"
+    }
+   },
+   "required": [
+    "backupTemplate",
+    "schedule"
+   ],
+   "type": "object"
+  },
+  "status": {
+   "additionalProperties": false,
+   "description": "PostgresBackupScheduleStatus defines the observed state of PostgresBackupSchedule",
+   "properties": {
+    "message": {
+     "description": "Message indicates a brief description of the status of the backup schedule",
+     "type": "string"
+    }
+   },
+   "type": "object"
+  }
+ },
+ "type": "object"
+}

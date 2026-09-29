@@ -1,0 +1,16 @@
+# Example for charts/crd-reference (the 4.5 documentation sample, adapted to the
+# fleet names). Render it with:
+#   helm template ref charts/crd-reference -f charts/crd-reference/examples/postgres.yaml
+postgres:
+  enabled: true
+  name: orders-db
+  spec:
+    postgresVersion: {name: postgres-17.6}
+    storageClassName: tpg-data-retain
+    storageSize: 20Gi
+    walStorageSize: 10Gi
+    serviceType: ClusterIP
+    persistentVolumeClaimPolicy: retain
+    imagePullSecret: {name: regsecret}
+    highAvailability: {enabled: true, readReplicas: 1}
+    backupLocation: {name: orders-db-backup-location}

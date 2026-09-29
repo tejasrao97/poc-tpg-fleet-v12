@@ -1,0 +1,479 @@
+# Day 0: validate the inputs, plan them into clusters/fleet.yaml, pre-check every
+# selected cluster, write the plan of the clusters that passed (pushMode direct or
+# pr), then install the Helm add-ons and deploy the Tanzu Postgres operator and the
+# Postgres instances, canary first and then in batches of maxParallel (rolloutMode:
+# canary, batches or all). The run ends Failed when any cluster was BLOCKED; the
+# clusters that passed are deployed first (design decision D61).
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: tpg-day0
+  namespace: argo
+  annotations:
+    workflows.argoproj.io/description: >-
+      Day 0: plan the inputs into clusters/fleet.yaml, pre-check every selected cluster, write the plan of
+      the clusters that passed, then install cert-manager and the Vault Secrets Operator and deploy the Tanzu
+      Postgres operator and Postgres instances,
+      canary first and then in batches of maxParallel (rolloutMode=batches skips the canary,
+      rolloutMode=all deploys every selected cluster at once).
+spec:
+  serviceAccountName: tpg-workflow
+  # Vault Agent (injector on the hub) renders tpg/shared/broadcom-registry,
+  # github-push and backup-storage into /vault/secrets before each step starts
+  # (ConfigMap tpg-vault-agent, workflows/vault-agent/config-init.hcl).
+  # Steps that need no credentials set agent-inject to "false".
+  podMetadata:
+    annotations:
+      vault.hashicorp.com/agent-inject: "true"
+      vault.hashicorp.com/agent-pre-populate-only: "true"
+      vault.hashicorp.com/agent-init-first: "true"
+      vault.hashicorp.com/agent-configmap: tpg-vault-agent
+      vault.hashicorp.com/tls-secret: vault-ca
+  entrypoint: main
+  onExit: exit-handler
+  parallelism: 20
+  arguments:
+    parameters:
+    # ---- targets: clusters and instances, or clusterMap (one of the two)
+    - name: clusters
+      description: "List: comma-separated registered clusters, or all (without clusterMap)"
+      value: ""
+    - name: instances
+      description: "List: Postgres instances to deploy on every selected cluster, namespace pg-<instance> (without clusterMap)"
+      value: ""
+    - name: clusterMap
+      description: "Map (YAML or JSON): cluster -> {operatorVersion, maxReadReplicas, instances: {instance -> {postgresVersion, highAvailability, readReplicas, storageSize, walStorageSize, storageClass, cpu, memory, backupSchedule, operatorFullSchedule, operatorIncrementalSchedule, enableSSL, ferret, ferretReplicas, ferretReadOnlyReplicas, ferretExposure, ferretSecretName, ferretReadOnlySecretName, exposure, serviceAnnotations, readOnlyExposure, readOnlyServiceAnnotations, allowedSourceRanges, internalLoadBalancerSubnet, networkPolicy, ingressFromNamespaces, ingressFromPodLabels, ingressFromCidrs, egressToCidrs, egressToFqdns}}}; the inputs below are the defaults"
+      value: ""
+    # ---- mandatory without clusterMap (with it: the map key or the input)
+    - name: highAvailability
+      description: "Boolean. true: primary and standby (plus readReplicas); false: single node"
+      value: ""
+      enum: ["", "true", "false"]
+    - name: operatorVersion
+      description: "Tanzu Postgres operator chart version, for example v4.5.0"
+      value: ""
+    - name: postgresVersion
+      description: "PostgresVersion name, for example postgres-17.6 (17.6 is accepted)"
+      value: ""
+    - name: pushMode
+      description: "direct: push to the fleet branch; pr: open a pull request and continue after it is merged"
+      value: ""
+      enum: ["", "direct", "pr"]
+    # ---- optional
+    - name: readReplicas
+      description: "Read replicas per instance, only with highAvailability=true: 1 to maxReadReplicas (empty: 1). With highAvailability=false leave it empty or 0; above 0 is refused"
+      value: ""
+    - name: storageSize
+      description: "Data volume size, for example 50Gi (empty: clusters/_template/instance.yaml)"
+      value: ""
+    - name: walStorageSize
+      description: "WAL volume size (empty: template default)"
+      value: ""
+    - name: storageClass
+      description: "StorageClass for data and WAL volumes (empty: template default tpg-data-retain)"
+      value: ""
+    - name: cpu
+      description: "CPU request and limit per Postgres pod, for example 2 (empty: template default)"
+      value: ""
+    - name: memory
+      description: "Memory request and limit per Postgres pod, for example 4Gi (empty: template default)"
+      value: ""
+    - name: backupSchedule
+      description: "fleet: include in the tpg-backup-full and tpg-backup-incr CronWorkflows; none: exclude; operator: PostgresBackupSchedule objects on operatorFullSchedule and operatorIncrementalSchedule instead of the CronWorkflows (D70)"
+      value: "fleet"
+      enum: ["fleet", "none", "operator"]
+    - name: operatorFullSchedule
+      description: "backupSchedule=operator: cron schedule (UTC) of the full backups"
+      value: "0 0 * * 0"
+    - name: operatorIncrementalSchedule
+      description: "backupSchedule=operator: cron schedule (UTC) of the incremental backups (empty: full backups only)"
+      value: "0 0 * * 1-6"
+    # ---- FerretDB (design decision D71, Tech Preview): MongoDB wire protocol on 27017
+    - name: ferret
+      description: "Boolean. true: a PostgresFerretDocumentDB for each instance (Postgres 17.5 or later; the DBA prepares the documentdb extension); false: none (removes it); empty: an existing instance keeps what it has"
+      value: ""
+      enum: ["", "false", "true"]
+    - name: ferretReplicas
+      description: "FerretDB read-write proxies (1 or more)"
+      value: "1"
+    - name: ferretReadOnlyReplicas
+      description: "FerretDB read-only proxies on the standby (0: none; above 0 needs highAvailability=true)"
+      value: "0"
+    - name: ferretExposure
+      description: "FerretDB Services: clusterIP (default), internalLoadBalancer or loadBalancer (with the instance's allowedSourceRanges and internalLoadBalancerSubnet)"
+      value: ""
+      enum: ["", "clusterIP", "internalLoadBalancer", "loadBalancer"]
+    - name: ferretSecretName
+      description: "Connection Secret of the read-write proxies (empty: <instance>-app-user-db-secret)"
+      value: ""
+    - name: ferretReadOnlySecretName
+      description: "Connection Secret of the read-only proxies (empty: <instance>-read-only-user-db-secret)"
+      value: ""
+    - name: installAddons
+      description: "Install cert-manager, the Vault Secrets Operator (and the standalone monitoring agent) as Helm releases, after the add-on pre-check"
+      value: "true"
+      enum: ["true", "false"]
+    - name: existingAddons
+      description: "installAddons: add-on releases that already exist with a different chart version or values: skip or upgrade"
+      value: "skip"
+      enum: ["skip", "upgrade"]
+    - name: monitoringOption
+      description: "Override tpg-settings monitoringOption for installAddons: none, azure or standalone"
+      value: ""
+      enum: ["", "none", "azure", "standalone"]
+    - name: maxParallel
+      value: "2"
+    - name: rolloutMode
+      description: "canary: one wave-0 cluster first, then batches of maxParallel; batches: no canary, batches of maxParallel; all: every selected cluster at once"
+      value: canary
+      enum: ["canary", "batches", "all"]
+    - name: backupEnableSSL
+      description: "PostgresBackupLocation enableSSL for the new instances: false (plain HTTP to Azure Blob; needs an account that allows HTTP) or true (HTTPS; the storage account CA bundle from tpg-settings is written as caBundle)"
+      value: "false"
+      enum: ["false", "true"]
+    # ---- exposure of the instance Services (design decision D64)
+    - name: exposure
+      description: "Read-write Service: clusterIP (default), internalLoadBalancer (Azure internal load balancer) or loadBalancer (public; set allowedSourceRanges)"
+      value: ""
+      enum: ["", "clusterIP", "internalLoadBalancer", "loadBalancer"]
+    - name: serviceAnnotations
+      description: "Map (YAML or JSON): extra annotations of the read-write Service, for example {service.beta.kubernetes.io/azure-dns-label-name: orders}"
+      value: ""
+    - name: readOnlyExposure
+      description: "Read-only Service of an HA instance: clusterIP (default), internalLoadBalancer or loadBalancer"
+      value: ""
+      enum: ["", "clusterIP", "internalLoadBalancer", "loadBalancer"]
+    - name: readOnlyServiceAnnotations
+      description: "Map (YAML or JSON): extra annotations of the read-only Service"
+      value: ""
+    - name: allowedSourceRanges
+      description: "List: CIDRs allowed to reach a load balancer Service (Azure annotation azure-allowed-ip-ranges)"
+      value: ""
+    - name: internalLoadBalancerSubnet
+      description: "internalLoadBalancer: the subnet of the cluster VNet for the load balancer IP (empty: the node subnet)"
+      value: ""
+    # ---- network policy (design decision D65)
+    - name: networkPolicy
+      description: "none (default): no policy; baseline: default deny plus the flows the instance needs, then the rules below"
+      value: ""
+      enum: ["", "none", "baseline"]
+    - name: ingressFromNamespaces
+      description: "List: namespaces whose pods may connect on 5432"
+      value: ""
+    - name: ingressFromPodLabels
+      description: "Map (YAML or JSON): pod labels allowed to connect on 5432 (in ingressFromNamespaces, or any namespace)"
+      value: ""
+    - name: ingressFromCidrs
+      description: "List: CIDRs allowed to connect on 5432 (clients outside the cluster, through a load balancer)"
+      value: ""
+    - name: egressToCidrs
+      description: "List: extra CIDRs the instance pods may reach"
+      value: ""
+    - name: egressToFqdns
+      description: "List: host names the instance pods may reach (CiliumNetworkPolicy toFQDNs; needs ACNS)"
+      value: ""
+    - name: dryRun
+      description: "true: validate, plan the fleet.yaml change and pre-check; push and deploy nothing"
+      value: "false"
+      enum: ["false", "true"]
+    - name: syncTimeoutSeconds
+      value: "1800"
+    - name: prTimeoutSeconds
+      description: "pushMode=pr: how long to wait for the pull request merge"
+      value: "3600"
+    - name: toolsImage
+      value: alpine/k8s:1.35.8
+  volumes:
+    - name: scripts
+      configMap:
+        name: tpg-scripts
+        defaultMode: 0755
+  templates:
+  - name: main
+    steps:
+    - - name: validate
+        template: validate
+    - - name: init
+        templateRef:
+          name: tpg-lib
+          template: init-run
+    - - name: fleet
+        template: fleet
+        arguments:
+          parameters:
+            - name: clusters
+              value: "{{steps.validate.outputs.parameters.clusters}}"
+    - - name: discover
+        templateRef:
+          name: tpg-lib
+          template: discover
+        arguments:
+          parameters:
+            - name: clusters
+              value: "{{steps.validate.outputs.parameters.selection}}"
+            - name: fleet
+              value: "{{steps.fleet.outputs.parameters.fleet}}"
+            - name: filter
+              value: "off"
+    - - name: precheck
+        template: precheck
+        arguments:
+          parameters:
+            - name: cluster
+              value: "{{item.name}}"
+        withParam: "{{steps.discover.outputs.parameters.inventory}}"
+    # clusters/fleet.yaml gets the plan of the clusters that passed the pre-check only
+    - - name: commit
+        templateRef:
+          name: tpg-lib
+          template: fleet-commit
+        arguments:
+          parameters:
+            - name: fleet
+              value: "{{steps.fleet.outputs.parameters.fleet}}"
+            - name: base
+              value: "{{steps.fleet.outputs.parameters.base}}"
+    - - name: plan
+        templateRef:
+          name: tpg-lib
+          template: plan-batches
+        arguments:
+          parameters:
+            - name: requirePrecheck
+              value: "true"
+            - name: maxParallel
+              value: "{{workflow.parameters.maxParallel}}"
+            - name: rolloutMode
+              value: "{{workflow.parameters.rolloutMode}}"
+    - - name: deploy
+        template: run-batches
+        when: "{{workflow.parameters.dryRun}} == false && {{steps.plan.outputs.parameters.hasBatches}} == true"
+        arguments:
+          parameters:
+            - name: batches
+              value: "{{steps.plan.outputs.parameters.batches}}"
+    - - name: gate
+        templateRef:
+          name: tpg-lib
+          template: blocked-gate
+  - name: validate
+    metadata:
+      annotations:
+        vault.hashicorp.com/agent-inject: "false"
+    outputs:
+      parameters:
+        - name: clusters
+          valueFrom:
+            path: /tmp/clusters.json
+            # A default keeps a failing validate step reporting its own error
+            # instead of Argo replacing it with "output parameter not found".
+            default: "[]"
+        - name: selection
+          valueFrom:
+            path: /tmp/selection
+            default: ""
+    container:
+      image: "{{workflow.parameters.toolsImage}}"
+      command: [bash, /scripts/validate-params.sh, day0]
+      env:
+        - {name: P_CLUSTER_MAP, value: "{{workflow.parameters.clusterMap}}"}
+        - {name: P_CLUSTERS, value: "{{workflow.parameters.clusters}}"}
+        - {name: P_INSTANCES, value: "{{workflow.parameters.instances}}"}
+        - {name: P_HA, value: "{{workflow.parameters.highAvailability}}"}
+        - {name: P_OPERATOR_VERSION, value: "{{workflow.parameters.operatorVersion}}"}
+        - {name: P_POSTGRES_VERSION, value: "{{workflow.parameters.postgresVersion}}"}
+        - {name: P_PUSH_MODE, value: "{{workflow.parameters.pushMode}}"}
+        - {name: P_READ_REPLICAS, value: "{{workflow.parameters.readReplicas}}"}
+        - {name: P_STORAGE_SIZE, value: "{{workflow.parameters.storageSize}}"}
+        - {name: P_WAL_STORAGE_SIZE, value: "{{workflow.parameters.walStorageSize}}"}
+        - {name: P_STORAGE_CLASS, value: "{{workflow.parameters.storageClass}}"}
+        - {name: P_CPU, value: "{{workflow.parameters.cpu}}"}
+        - {name: P_MEMORY, value: "{{workflow.parameters.memory}}"}
+        - {name: P_BACKUP_SCHEDULE, value: "{{workflow.parameters.backupSchedule}}"}
+        - {name: P_OPERATOR_FULL_SCHEDULE, value: "{{workflow.parameters.operatorFullSchedule}}"}
+        - {name: P_OPERATOR_INCR_SCHEDULE, value: "{{workflow.parameters.operatorIncrementalSchedule}}"}
+        - {name: P_FERRET, value: "{{workflow.parameters.ferret}}"}
+        - {name: P_FERRET_REPLICAS, value: "{{workflow.parameters.ferretReplicas}}"}
+        - {name: P_FERRET_RO_REPLICAS, value: "{{workflow.parameters.ferretReadOnlyReplicas}}"}
+        - {name: P_FERRET_EXPOSURE, value: "{{workflow.parameters.ferretExposure}}"}
+        - {name: P_FERRET_SECRET, value: "{{workflow.parameters.ferretSecretName}}"}
+        - {name: P_FERRET_RO_SECRET, value: "{{workflow.parameters.ferretReadOnlySecretName}}"}
+        - {name: P_INSTALL_ADDONS, value: "{{workflow.parameters.installAddons}}"}
+        - {name: P_EXISTING, value: "{{workflow.parameters.existingAddons}}"}
+        - {name: P_MONITORING_OPTION, value: "{{workflow.parameters.monitoringOption}}"}
+        - {name: P_MAX_PARALLEL, value: "{{workflow.parameters.maxParallel}}"}
+        - {name: P_ROLLOUT_MODE, value: "{{workflow.parameters.rolloutMode}}"}
+        - {name: P_BACKUP_ENABLE_SSL, value: "{{workflow.parameters.backupEnableSSL}}"}
+        - {name: P_EXPOSURE, value: "{{workflow.parameters.exposure}}"}
+        - {name: P_SERVICE_ANNOTATIONS, value: "{{workflow.parameters.serviceAnnotations}}"}
+        - {name: P_READ_ONLY_EXPOSURE, value: "{{workflow.parameters.readOnlyExposure}}"}
+        - {name: P_READ_ONLY_SERVICE_ANNOTATIONS, value: "{{workflow.parameters.readOnlyServiceAnnotations}}"}
+        - {name: P_ALLOWED_SOURCE_RANGES, value: "{{workflow.parameters.allowedSourceRanges}}"}
+        - {name: P_INTERNAL_LB_SUBNET, value: "{{workflow.parameters.internalLoadBalancerSubnet}}"}
+        - {name: P_NETWORK_POLICY, value: "{{workflow.parameters.networkPolicy}}"}
+        - {name: P_INGRESS_FROM_NAMESPACES, value: "{{workflow.parameters.ingressFromNamespaces}}"}
+        - {name: P_INGRESS_FROM_POD_LABELS, value: "{{workflow.parameters.ingressFromPodLabels}}"}
+        - {name: P_INGRESS_FROM_CIDRS, value: "{{workflow.parameters.ingressFromCidrs}}"}
+        - {name: P_EGRESS_TO_CIDRS, value: "{{workflow.parameters.egressToCidrs}}"}
+        - {name: P_EGRESS_TO_FQDNS, value: "{{workflow.parameters.egressToFqdns}}"}
+        - {name: P_DRY_RUN, value: "{{workflow.parameters.dryRun}}"}
+        - {name: P_TIMEOUT, value: "{{workflow.parameters.syncTimeoutSeconds}}"}
+        - {name: P_PR_TIMEOUT, value: "{{workflow.parameters.prTimeoutSeconds}}"}
+      volumeMounts:
+        - name: scripts
+          mountPath: /scripts
+  - name: fleet
+    inputs:
+      parameters:
+        - name: clusters
+    outputs:
+      parameters:
+        # the planned clusters/fleet.yaml and the one it started from, as JSON
+        - name: fleet
+          valueFrom:
+            path: /tmp/fleet.json
+            default: "{}"
+        - name: base
+          valueFrom:
+            path: /tmp/fleet-base.json
+            default: "{}"
+    container:
+      image: "{{workflow.parameters.toolsImage}}"
+      command: [bash, /scripts/fleet-day0.sh]
+      args:
+        - "{{workflow.name}}"
+        - "{{inputs.parameters.clusters}}"
+      env:
+        - {name: P_CLUSTER_MAP, value: "{{workflow.parameters.clusterMap}}"}
+        - {name: P_CLUSTERS, value: "{{workflow.parameters.clusters}}"}
+        - {name: P_INSTANCES, value: "{{workflow.parameters.instances}}"}
+        - {name: P_HA, value: "{{workflow.parameters.highAvailability}}"}
+        - {name: P_OPERATOR_VERSION, value: "{{workflow.parameters.operatorVersion}}"}
+        - {name: P_POSTGRES_VERSION, value: "{{workflow.parameters.postgresVersion}}"}
+        - {name: P_PUSH_MODE, value: "{{workflow.parameters.pushMode}}"}
+        - {name: P_READ_REPLICAS, value: "{{workflow.parameters.readReplicas}}"}
+        - {name: P_STORAGE_SIZE, value: "{{workflow.parameters.storageSize}}"}
+        - {name: P_WAL_STORAGE_SIZE, value: "{{workflow.parameters.walStorageSize}}"}
+        - {name: P_STORAGE_CLASS, value: "{{workflow.parameters.storageClass}}"}
+        - {name: P_CPU, value: "{{workflow.parameters.cpu}}"}
+        - {name: P_MEMORY, value: "{{workflow.parameters.memory}}"}
+        - {name: P_BACKUP_SCHEDULE, value: "{{workflow.parameters.backupSchedule}}"}
+        - {name: P_OPERATOR_FULL_SCHEDULE, value: "{{workflow.parameters.operatorFullSchedule}}"}
+        - {name: P_OPERATOR_INCR_SCHEDULE, value: "{{workflow.parameters.operatorIncrementalSchedule}}"}
+        - {name: P_FERRET, value: "{{workflow.parameters.ferret}}"}
+        - {name: P_FERRET_REPLICAS, value: "{{workflow.parameters.ferretReplicas}}"}
+        - {name: P_FERRET_RO_REPLICAS, value: "{{workflow.parameters.ferretReadOnlyReplicas}}"}
+        - {name: P_FERRET_EXPOSURE, value: "{{workflow.parameters.ferretExposure}}"}
+        - {name: P_FERRET_SECRET, value: "{{workflow.parameters.ferretSecretName}}"}
+        - {name: P_FERRET_RO_SECRET, value: "{{workflow.parameters.ferretReadOnlySecretName}}"}
+        - {name: P_INSTALL_ADDONS, value: "{{workflow.parameters.installAddons}}"}
+        - {name: P_MONITORING_OPTION, value: "{{workflow.parameters.monitoringOption}}"}
+        - {name: P_MAX_PARALLEL, value: "{{workflow.parameters.maxParallel}}"}
+        - {name: P_ROLLOUT_MODE, value: "{{workflow.parameters.rolloutMode}}"}
+        - {name: P_BACKUP_ENABLE_SSL, value: "{{workflow.parameters.backupEnableSSL}}"}
+        - {name: P_EXPOSURE, value: "{{workflow.parameters.exposure}}"}
+        - {name: P_SERVICE_ANNOTATIONS, value: "{{workflow.parameters.serviceAnnotations}}"}
+        - {name: P_READ_ONLY_EXPOSURE, value: "{{workflow.parameters.readOnlyExposure}}"}
+        - {name: P_READ_ONLY_SERVICE_ANNOTATIONS, value: "{{workflow.parameters.readOnlyServiceAnnotations}}"}
+        - {name: P_ALLOWED_SOURCE_RANGES, value: "{{workflow.parameters.allowedSourceRanges}}"}
+        - {name: P_INTERNAL_LB_SUBNET, value: "{{workflow.parameters.internalLoadBalancerSubnet}}"}
+        - {name: P_NETWORK_POLICY, value: "{{workflow.parameters.networkPolicy}}"}
+        - {name: P_INGRESS_FROM_NAMESPACES, value: "{{workflow.parameters.ingressFromNamespaces}}"}
+        - {name: P_INGRESS_FROM_POD_LABELS, value: "{{workflow.parameters.ingressFromPodLabels}}"}
+        - {name: P_INGRESS_FROM_CIDRS, value: "{{workflow.parameters.ingressFromCidrs}}"}
+        - {name: P_EGRESS_TO_CIDRS, value: "{{workflow.parameters.egressToCidrs}}"}
+        - {name: P_EGRESS_TO_FQDNS, value: "{{workflow.parameters.egressToFqdns}}"}
+        - {name: P_DRY_RUN, value: "{{workflow.parameters.dryRun}}"}
+        - {name: P_TIMEOUT, value: "{{workflow.parameters.syncTimeoutSeconds}}"}
+        - {name: P_PR_TIMEOUT, value: "{{workflow.parameters.prTimeoutSeconds}}"}
+      volumeMounts:
+        - name: scripts
+          mountPath: /scripts
+  - name: run-batches
+    inputs:
+      parameters:
+        - name: batches
+    steps:
+    - - name: split
+        templateRef:
+          name: tpg-lib
+          template: split-first
+        arguments:
+          parameters:
+            - name: batches
+              value: "{{inputs.parameters.batches}}"
+    - - name: batch
+        template: deploy-cluster
+        arguments:
+          parameters:
+            - name: cluster
+              value: "{{item}}"
+        withParam: "{{steps.split.outputs.parameters.first}}"
+    - - name: next
+        template: run-batches
+        when: "{{steps.split.outputs.parameters.hasRest}} == true"
+        arguments:
+          parameters:
+            - name: batches
+              value: "{{steps.split.outputs.parameters.rest}}"
+  - name: precheck
+    inputs:
+      parameters:
+        - name: cluster
+    container:
+      image: "{{workflow.parameters.toolsImage}}"
+      command: [bash, /scripts/day0-precheck.sh]
+      args:
+        - "{{workflow.name}}"
+        - "{{inputs.parameters.cluster}}"
+      volumeMounts:
+        - name: scripts
+          mountPath: /scripts
+  - name: deploy-cluster
+    inputs:
+      parameters:
+        - name: cluster
+    synchronization:
+      mutexes:
+        - name: "tpg-cluster-{{inputs.parameters.cluster}}"
+    outputs:
+      parameters:
+        - name: result
+          valueFrom:
+            path: /tmp/result
+            default: UNKNOWN
+    metrics:
+      prometheus:
+        - name: tpg_day0_result
+          help: "Day 0 result per cluster"
+          labels:
+            - key: cluster
+              value: "{{inputs.parameters.cluster}}"
+            - key: result
+              value: "{{outputs.parameters.result}}"
+          counter:
+            value: "1"
+    container:
+      image: "{{workflow.parameters.toolsImage}}"
+      command: [bash, /scripts/day0-deploy.sh]
+      args:
+        - "{{workflow.name}}"
+        - "{{inputs.parameters.cluster}}"
+        - "{{workflow.parameters.syncTimeoutSeconds}}"
+        - "{{workflow.parameters.installAddons}}"
+      env:
+        - {name: MONITORING_OPTION, value: "{{workflow.parameters.monitoringOption}}"}
+        - {name: EXISTING_ADDONS, value: "{{workflow.parameters.existingAddons}}"}
+      volumeMounts:
+        - name: scripts
+          mountPath: /scripts
+  - name: exit-handler
+    steps:
+    - - name: report
+        templateRef:
+          name: tpg-lib
+          template: report
+        arguments:
+          parameters:
+            - name: mode
+              value: "cluster-or-precheck:{{workflow.parameters.dryRun}}"

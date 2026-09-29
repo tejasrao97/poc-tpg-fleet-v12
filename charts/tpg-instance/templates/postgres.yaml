@@ -1,0 +1,65 @@
+{{- /*
+The Postgres object: rendered from the values (with the current values patch
+file applied, tpg.ctx), then the current postgres patch file of the instance
+(tpg.patchRef postgres, tpg-patch postgresPatchFilePath) is merged into spec. A
+postgres patch file is a partial manifest: apiVersion sql.tanzu.vmware.com/v1,
+kind Postgres and a spec fragment; any field of the Postgres CRD can be set.
+Fields that belong to other workflows (postgresVersion, highAvailability) or
+cannot change on a running instance are refused by tpg-patch before the file is
+referenced.
+
+highAvailability (design decision D69) is written only for an HA instance:
+enabled true with readReplicas 1 or more. A single-node instance (enabled
+false, readReplicas 0 in clusters/fleet.yaml, which the fleet keeps explicit
+because clusters/_template/instance.yaml defaults to true and 1) gets no
+highAvailability block: the operator treats the absent block as a single node
+(its documented defaults are false and 0), and a declared false/0 block was
+reported OutOfSync (Round 12, item 5). enabled true with readReplicas 0, and
+readReplicas above 0 without enabled, fail the render (the workflows refuse
+both before they reach Git).
+Last, tpg.prune leaves out every field that holds its zero default, patch
+file content included (templates/_prune.tpl).
+*/ -}}
+{{- define "tpg.postgres" -}}
+apiVersion: sql.tanzu.vmware.com/v1
+kind: Postgres
+metadata:
+  name: {{ .Values.instance.name }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  postgresVersion:
+    name: {{ .Values.instance.postgresVersion }}
+  storageClassName: {{ .Values.instance.storageClassName }}
+  storageSize: {{ .Values.instance.storageSize }}
+  walStorageSize: {{ .Values.instance.walStorageSize }}
+  {{- include "tpg.services" . | nindent 2 }}
+  persistentVolumeClaimPolicy: retain
+  imagePullSecret:
+    name: regsecret
+  {{- $ha := default dict .Values.instance.highAvailability }}
+  {{- $haOn := eq (toString $ha.enabled) "true" }}
+  {{- $rr := int (default 0 $ha.readReplicas) }}
+  {{- if and $haOn (lt $rr 1) }}{{ fail (printf "instance.highAvailability.enabled is true with readReplicas %d: an HA instance needs readReplicas 1 or more (or set enabled false for a single node)" $rr) }}{{ end }}
+  {{- if and (not $haOn) (gt $rr 0) }}{{ fail (printf "instance.highAvailability.readReplicas is %d but enabled is not true: read replicas need highAvailability.enabled true" $rr) }}{{ end }}
+  {{- if $haOn }}
+  highAvailability:
+    enabled: true
+    readReplicas: {{ $rr }}
+  {{- end }}
+  backupLocation:
+    name: {{ .Values.instance.name }}-backup-location
+  resources:
+    {{- toYaml .Values.instance.resources | nindent 4 }}
+{{- end -}}
+{{- $ctx := include "tpg.ctx" . | fromYaml -}}
+{{- $pg := include "tpg.postgres" $ctx | fromYaml -}}
+{{- $f := include "tpg.patchRef" (dict "root" $ "kind" "postgres") -}}
+{{- if $f -}}
+{{-   $p := include "tpg.patchFile" (dict "root" $ "file" $f "what" "postgres") | fromYaml -}}
+{{-   if ne (toString (default "" $p.kind)) "Postgres" }}{{ fail (printf "postgres patch file %s must have kind: Postgres (got %v)" $f $p.kind) }}{{ end -}}
+{{-   $_ := include "tpg.deepMerge" (dict "dst" $pg.spec "src" (default dict $p.spec)) -}}
+{{- end }}
+{{- $_ := include "tpg.prune" (dict "obj" $pg "root" $) }}
+{{ toYaml $pg }}

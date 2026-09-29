@@ -1,0 +1,204 @@
+{{- /*
+Network policy of the instance namespace pg-<instance> (design decision D65),
+rendered only when network.policy is baseline (tpg-day0 and
+tpg-create-instance input networkPolicy, or tpg-network-policy).
+
+  NetworkPolicy tpg-ingress (every pod of the namespace): selecting the pods
+  makes ingress default deny; allowed are
+    - the pods of this namespace (Patroni replication and REST API, pgBackRest)
+    - the operator namespace (reconcilers, backups, upgrades)
+    - the metrics port 9187 from network.monitoringNamespaces
+    - port 5432 from ingressFromNamespaces, ingressFromPodLabels, ingressFromCidrs
+    - port 5432 from the Azure load balancer health probe address when a
+      Service is a load balancer
+    - with FerretDB (ferret.enabled, D71): port 27017 from the same client
+      rules, and from the health probe address when ferret.exposure is a load
+      balancer
+  CiliumNetworkPolicy tpg-egress (every endpoint of the namespace): an egress
+  section makes egress default deny; allowed are
+    - the endpoints of this namespace and the operator namespace
+    - DNS (kube-system kube-dns and AKS LocalDNS, UDP and TCP 53)
+    - the Kubernetes API server (Patroni keeps the leader lock in the API)
+    - Azure Blob storage for pgBackRest: *.blob.core.windows.net by FQDN when
+      network.acns is true (ACNS), otherwise any address on TCP 443 (and 80
+      while backup.enableSSL is false)
+    - egressToCidrs and egressToFqdns
+
+Cilium adds up the allow rules of both policies. A rule is rendered only for a
+non-empty input: a NetworkPolicy peer list that is empty or missing matches
+every source (F9).
+*/ -}}
+{{- with (include "tpg.ctx" . | fromYaml) }}
+{{- $n := .Values.network -}}
+{{- if eq (toString $n.policy) "baseline" }}
+{{- $name := .Values.instance.name -}}
+{{- $lb := or (ne (default "clusterIP" .Values.instance.exposure) "clusterIP") (ne (default "clusterIP" .Values.instance.readOnlyExposure) "clusterIP") -}}
+{{- $fv := default dict .Values.ferret -}}
+{{- $ferret := eq (toString $fv.enabled) "true" -}}
+{{- $flb := and $ferret (ne (default "clusterIP" $fv.exposure) "clusterIP") -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tpg-ingress
+  labels:
+    tpg.fleet/instance: {{ $name }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    # the pods of this namespace: replication, Patroni REST API, pgBackRest
+    - from:
+        - podSelector: {}
+    # the Tanzu Postgres operator
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $n.operatorNamespace }}
+    {{- with $n.monitoringNamespaces }}
+    # metrics (postgres-metrics-exporter)
+    - from:
+        {{- range . }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: 9187
+    {{- end }}
+    {{- if or $n.ingressFromNamespaces $n.ingressFromPodLabels $n.ingressFromCidrs $lb }}
+    # clients on the Postgres port
+    - from:
+        {{- include "tpg.clientPeers" (dict "n" $n "lb" $lb) | nindent 8 }}
+      ports:
+        - protocol: TCP
+          port: 5432
+    {{- end }}
+    {{- if and $ferret (or $n.ingressFromNamespaces $n.ingressFromPodLabels $n.ingressFromCidrs $flb) }}
+    # FerretDB clients (MongoDB wire protocol, D71): the same client rules
+    - from:
+        {{- include "tpg.clientPeers" (dict "n" $n "lb" $flb) | nindent 8 }}
+      ports:
+        - protocol: TCP
+          port: 27017
+    {{- end }}
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: tpg-egress
+  labels:
+    tpg.fleet/instance: {{ $name }}
+spec:
+  endpointSelector: {}
+  egress:
+    # this namespace and the operator
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: pg-{{ $name }}
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: {{ $n.operatorNamespace }}
+    # DNS: CoreDNS, and AKS LocalDNS (169.254.10.0/24 and the host entity, as
+    # the AKS documentation for Azure CNI powered by Cilium requires){{ if or $n.acns $n.egressToFqdns }},
+    # through the Cilium DNS proxy that toFQDNs needs{{ end }}
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        {{- include "tpg.dnsPorts" $n | nindent 8 }}
+    - toCIDR:
+        - 169.254.10.0/24
+      toPorts:
+        {{- include "tpg.dnsPorts" $n | nindent 8 }}
+    - toEntities:
+        - host
+      toPorts:
+        {{- include "tpg.dnsPorts" $n | nindent 8 }}
+    # the Kubernetes API server (Patroni leader lock)
+    - toEntities:
+        - kube-apiserver
+    # Azure Blob storage (pgBackRest)
+    {{- if $n.acns }}
+    - toFQDNs:
+        - matchPattern: "*.{{ .Values.backup.endpoint }}"
+    {{- else }}
+    - toEntities:
+        - world
+    {{- end }}
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            {{- if not .Values.backup.enableSSL }}
+            - port: "80"
+              protocol: TCP
+            {{- end }}
+    {{- with $n.egressToCidrs }}
+    - toCIDR:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+    {{- with $n.egressToFqdns }}
+    - toFQDNs:
+        {{- range . }}
+        {{- if hasPrefix "*." . }}
+        - matchPattern: {{ . | quote }}
+        {{- else }}
+        - matchName: {{ . | quote }}
+        {{- end }}
+        {{- end }}
+    {{- end }}
+{{- end }}
+{{- end }}
+{{- define "tpg.dnsPorts" -}}
+- ports:
+    - port: "53"
+      protocol: UDP
+    - port: "53"
+      protocol: TCP
+  {{- if or .acns .egressToFqdns }}
+  rules:
+    dns:
+      - matchPattern: "*"
+  {{- end }}
+{{- end -}}
+{{- /*
+tpg.clientPeers (dict "n" NETWORK "lb" BOOL): the "from" peers of a client
+rule: ingressFromNamespaces (with ingressFromPodLabels when both are set),
+ingressFromPodLabels alone (those pods in any namespace), ingressFromCidrs, and
+the Azure load balancer health probe address when lb is true.
+*/ -}}
+{{- define "tpg.clientPeers" -}}
+{{- $n := .n -}}
+{{- if and $n.ingressFromNamespaces $n.ingressFromPodLabels }}
+{{- range $n.ingressFromNamespaces }}
+- namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: {{ . }}
+  podSelector:
+    matchLabels:
+      {{- toYaml $n.ingressFromPodLabels | nindent 6 }}
+{{- end }}
+{{- else if $n.ingressFromNamespaces }}
+{{- range $n.ingressFromNamespaces }}
+- namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: {{ . }}
+{{- end }}
+{{- else if $n.ingressFromPodLabels }}
+- namespaceSelector: {}
+  podSelector:
+    matchLabels:
+      {{- toYaml $n.ingressFromPodLabels | nindent 6 }}
+{{- end }}
+{{- range $n.ingressFromCidrs }}
+- ipBlock:
+    cidr: {{ . }}
+{{- end }}
+{{- if .lb }}
+# Azure load balancer health probes
+- ipBlock:
+    cidr: 168.63.129.16/32
+{{- end }}
+{{- end -}}

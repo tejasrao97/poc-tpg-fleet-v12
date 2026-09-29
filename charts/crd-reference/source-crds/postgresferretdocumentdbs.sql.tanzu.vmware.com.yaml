@@ -1,0 +1,143 @@
+# CustomResourceDefinition postgresferretdocumentdbs.sql.tanzu.vmware.com as installed by the Tanzu for Postgres operator 4.5.0
+# (kubectl get crd postgresferretdocumentdbs.sql.tanzu.vmware.com -o yaml on the lab cluster; volatile metadata and status removed).
+# Reference only: tools/crd-defaults/generate.py reads it. Never applied from here.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  labels:
+    app: postgres-operator
+  name: postgresferretdocumentdbs.sql.tanzu.vmware.com
+spec:
+  conversion:
+    strategy: None
+  group: sql.tanzu.vmware.com
+  names:
+    kind: PostgresFerretDocumentDB
+    listKind: PostgresFerretDocumentDBList
+    plural: postgresferretdocumentdbs
+    singular: postgresferretdocumentdb
+  scope: Namespaced
+  versions:
+  - name: v1
+    schema:
+      openAPIV3Schema:
+        description: PostgresFerretDocumentDB is the Schema for the postgresferretdocumentdb API
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation of an object.
+
+              Servers should convert recognized schemas to the latest internal value, and
+
+              may reject unrecognized values.
+
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this object represents.
+
+              Servers may infer this from the endpoint the client submits requests to.
+
+              Cannot be updated.
+
+              In CamelCase.
+
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: PostgresFerretDocumentDBSpec defines the desired state of PostgresFerretDocumentDB
+            properties:
+              postgres:
+                description: PostgreSQL connection configuration
+                properties:
+                  connectionDetails:
+                    description: PostgresConnectionDetails defines connection details for PostgreSQL instances
+                    properties:
+                      readOnly:
+                        description: Connection details for PostgreSQL standby (read-only)
+                        properties:
+                          secretName:
+                            description: Name of the secret containing connection details
+                            type: string
+                        required:
+                        - secretName
+                        type: object
+                      readWrite:
+                        description: Connection details for PostgreSQL primary (read-write)
+                        properties:
+                          secretName:
+                            description: Name of the secret containing connection details
+                            type: string
+                        required:
+                        - secretName
+                        type: object
+                    required:
+                    - readWrite
+                    type: object
+                required:
+                - connectionDetails
+                type: object
+              readOnly:
+                description: ReadOnly configuration for FerretDB instances that connect to PostgreSQL standby
+                properties:
+                  replicas:
+                    default: 1
+                    description: Number of replicas for this FerretDB instance type
+                    format: int32
+                    type: integer
+                required:
+                - replicas
+                type: object
+              readWrite:
+                description: ReadWrite configuration for FerretDB instances that connect to PostgreSQL primary
+                properties:
+                  replicas:
+                    default: 1
+                    description: Number of replicas for this FerretDB instance type
+                    format: int32
+                    type: integer
+                required:
+                - replicas
+                type: object
+              service:
+                description: Service configuration
+                properties:
+                  readOnlyServiceAnnotations:
+                    additionalProperties:
+                      type: string
+                    type: object
+                  readOnlyServiceType:
+                    default: ClusterIP
+                    description: 'ReadOnlyServiceType describes the Kubernetes publishing service used for the ferret instance
+                      read replica(s).
+
+                      By default, ClusterIP is used'
+                    enum:
+                    - ClusterIP
+                    - LoadBalancer
+                    type: string
+                  serviceAnnotations:
+                    additionalProperties:
+                      type: string
+                    type: object
+                  serviceType:
+                    default: ClusterIP
+                    description: 'ServiceType describes the Kubernetes publishing service used for the ferret instance.
+
+                      By default, ClusterIP is used'
+                    enum:
+                    - ClusterIP
+                    - LoadBalancer
+                    type: string
+                type: object
+            required:
+            - postgres
+            - readWrite
+            - service
+            type: object
+        type: object
+    served: true
+    storage: true

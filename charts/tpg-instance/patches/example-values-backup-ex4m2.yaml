@@ -1,0 +1,13 @@
+# Example values patch file (tpg-patch and tpg-create-instance valuesPatchFilePath),
+# as the workflows store it: <name>-<uid>.yaml, referenced by clusters/fleet.example.yaml.
+# Write the same content in a file on the machine that submits the run and pass its
+# path; the workflow stores it here under its own name plus a 5-character UID.
+# A fragment of the chart values (every key must exist in charts/tpg-instance/values.yaml
+# or clusters/_template/), merged over the instance's values before the chart renders.
+# tpg-patch refuses instance.name, instance.postgresVersion,
+# instance.highAvailability, instance.storageClassName, a smaller
+# instance.storageSize or instance.walStorageSize, and backup.additionalParameters,
+# backup.enableSSL and backup.forcePathStyle (the tpg-instances ApplicationSet
+# ignores those fields on a running instance, so a sync would never apply them).
+backup:
+  fullRetention: 6

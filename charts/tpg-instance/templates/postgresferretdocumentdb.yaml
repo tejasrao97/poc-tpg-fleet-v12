@@ -1,0 +1,54 @@
+{{- /*
+FerretDB of the instance (design decision D71): a PostgresFerretDocumentDB
+named like the instance, rendered only when ferret.enabled is true (tpg-day0
+and tpg-create-instance input ferret, or a tpg-patch values file). Tech
+Preview in operator 4.5.
+
+  readWrite.replicas   ferret.replicas (1 or more)
+  readOnly.replicas    ferret.readOnlyReplicas; 0 renders no readOnly section
+                       (the schema default of readOnly.replicas is 1); above 0
+                       needs highAvailability (the proxies read from the standby)
+  connection Secrets   ferret.secretName / ferret.readOnlySecretName, default
+                       <instance>-app-user-db-secret and
+                       <instance>-read-only-user-db-secret (created by the operator)
+  Services             ferretdb-rw-<instance> and ferretdb-ro-<instance> (port
+                       27017), published like the instance with ferret.exposure,
+                       instance.allowedSourceRanges and internalLoadBalancerSubnet
+
+Refused at render: Postgres below 17.5 (FerretDB needs 17.5), readOnlyReplicas
+without HA. The documentdb extension is prepared by the DBA (extensions are out
+of scope); the workflows record warning FERRET_EXTENSION_REQUIRED. Sync wave 2:
+created after the instance (wave 1) is Healthy, when its Secrets exist.
+Field defaults: charts/crd-reference/templates/postgresFerretDocumentDB.yaml.
+*/ -}}
+{{- with (include "tpg.ctx" . | fromYaml) }}
+{{- $f := default dict .Values.ferret }}
+{{- if eq (toString $f.enabled) "true" }}
+{{- $i := .Values.instance }}
+{{- $name := $i.name }}
+{{- $v := regexFind "^postgres-[0-9]+(\\.[0-9]+)?" (toString $i.postgresVersion) | trimPrefix "postgres-" }}
+{{- if or (not $v) (not (semverCompare ">=17.5" $v)) }}{{ fail (printf "ferret.enabled needs Postgres 17.5 or later (instance.postgresVersion is %q)" (toString $i.postgresVersion)) }}{{ end }}
+{{- $rw := int (default 1 $f.replicas) }}
+{{- if lt $rw 1 }}{{ fail "ferret.replicas must be 1 or more" }}{{ end }}
+{{- $ro := int (default 0 $f.readOnlyReplicas) }}
+{{- $ha := eq (toString (default dict $i.highAvailability).enabled) "true" }}
+{{- if and (gt $ro 0) (not $ha) }}{{ fail (printf "ferret.readOnlyReplicas %d needs highAvailability: the read-only FerretDB proxies connect to the standby (set it to 0 on a single-node instance)" $ro) }}{{ end }}
+{{- $ex := include "tpg.exposure" (dict "exposure" (default "clusterIP" $f.exposure) "subnet" $i.internalLoadBalancerSubnet "ranges" $i.allowedSourceRanges "extra" dict) | fromYaml }}
+{{- $conn := dict "readWrite" (dict "secretName" (default (printf "%s-app-user-db-secret" $name) $f.secretName)) }}
+{{- $svc := dict "serviceType" $ex.type "serviceAnnotations" (default dict $ex.annotations) }}
+{{- $spec := dict "readWrite" (dict "replicas" $rw) "postgres" (dict "connectionDetails" $conn) "service" $svc "readOnly" (dict "replicas" $ro) }}
+{{- if gt $ro 0 }}
+{{- $_ := set $conn "readOnly" (dict "secretName" (default (printf "%s-read-only-user-db-secret" $name) $f.readOnlySecretName)) }}
+{{- $_ := set $svc "readOnlyServiceType" $ex.type }}
+{{- $_ := set $svc "readOnlyServiceAnnotations" (default dict $ex.annotations) }}
+{{- end }}
+{{- $obj := dict "apiVersion" "sql.tanzu.vmware.com/v1" "kind" "PostgresFerretDocumentDB"
+      "metadata" (dict "name" $name
+                       "labels" (dict "tpg.fleet/instance" $name)
+                       "annotations" (dict "argocd.argoproj.io/sync-wave" "2"))
+      "spec" $spec }}
+{{- $_ := include "tpg.prune" (dict "obj" $obj "root" $) }}
+---
+{{ toYaml $obj }}
+{{- end }}
+{{- end }}

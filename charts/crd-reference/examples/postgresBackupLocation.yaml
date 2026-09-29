@@ -1,0 +1,20 @@
+# Example for charts/crd-reference (the 4.5 documentation sample, adapted to the
+# fleet names). Render it with:
+#   helm template ref charts/crd-reference -f charts/crd-reference/examples/postgresBackupLocation.yaml
+postgresBackupLocation:
+  enabled: true
+  name: orders-db-backup-location
+  spec:
+    retentionPolicy:
+      fullRetention: {type: count, number: 4}
+      diffRetention: {number: 6}
+    storage:
+      azure:
+        container: pg-backups-aks-tpg-poc-01
+        repoPath: /pg-orders-db
+        endpoint: blob.core.windows.net
+        keyType: shared
+        enableSSL: false
+        secret: {name: backup-storage}
+    backupSync: {enabled: true}
+    backupIntegrityValidation: {enabled: true}

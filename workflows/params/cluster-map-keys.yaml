@@ -1,0 +1,294 @@
+# Keys accepted in the clusterMap input of the tpg workflows.
+#
+# clusterMap is optional on tpg-day0, tpg-create-instance, tpg-upgrade,
+# tpg-patch, tpg-backup, tpg-backup-retention, tpg-scale-instance,
+# tpg-delete-instance, tpg-delete-apps and tpg-network-policy. It selects the targets (clusters and the instances on each)
+# and carries per-cluster and per-instance values:
+#
+#   <cluster>:                     a registered cluster
+#     <cluster key>: <value>       keys under "cluster" below
+#     instances:
+#       <instance>:                a DNS label (namespace pg-<instance>)
+#         <instance key>: <value>  keys under "instance" below
+#
+# Written as YAML or JSON. Every key is checked by workflows/scripts/clustermap.py
+# in the validate step: its type, whether the workflow accepts it, and whether a
+# required value is present (the map key, else the workflow input named in
+# "flag"). An unknown key fails the run with the closest known key.
+#
+# Adding a key is one entry here:
+#   type       string | name | boolean | integer | posint | quantity | enum |
+#              operatorVersion | postgresVersion | patchFile |
+#              nameList (DNS labels) | cidrList (IPv4/IPv6 CIDRs) |
+#              fqdnList (host names, * allowed as the first label) |
+#              stringMap (annotation or label keys to string values) |
+#              cron (5 fields; allowNone: true also takes none or an empty value) |
+#              k8sName (a Kubernetes object name)
+#              A list is a YAML/JSON list or a comma-separated string; a
+#              stringMap is a YAML/JSON mapping. Neither may be empty: a key
+#              that should no longer apply is removed, not set to [] or {}
+#              (an empty value cannot clear a value set at a lower level).
+#   values     enum only: the accepted values
+#   workflows  workflow -> required | optional | guard
+#              required: the key or the workflow input "flag" must be set
+#              optional: used when set, otherwise the workflow input "flag" applies
+#              guard:    when set, a target whose live value differs is skipped
+#                        (SKIPPED_VERSION_MISMATCH); nothing is changed
+#   flag       the workflow input that supplies the default (default: the key name)
+#   fleet      tpg-day0, tpg-create-instance and tpg-network-policy: clusters/fleet.yaml
+#              paths the value is written to,
+#              relative to clusters.<cluster> or clusters.<cluster>.instances.<instance>
+#   format     tpg-day0 and tpg-create-instance: how the value is written:
+#              string (default) | number | boolean | list | map
+# A key with "fleet" needs no code: fleet-day0.sh writes it. Keys without "fleet"
+# are read by the step script of each workflow that lists them.
+version: 1
+
+workflows:
+  - day0
+  - create-instance
+  - upgrade
+  - patch
+  - backup
+  - backup-retention
+  - scale
+  - delete-instance
+  - delete-apps
+  - network-policy
+
+cluster:
+  operatorVersion:
+    type: operatorVersion
+    workflows: {day0: required, upgrade: optional}
+    fleet: [.operator.version]
+    format: operatorVersion
+  maxReadReplicas:
+    # the cap on readReplicas of every instance of the cluster (default 3).
+    # tpg-scale-instance (Round 14, D80) writes it through scale-instance.sh and
+    # takes the input of the same name as its default; tpg-day0 and
+    # tpg-create-instance have no input for it
+    type: posint
+    workflows: {day0: optional, create-instance: optional, scale: optional}
+    fleet: [.cluster.maxReadReplicas]
+    format: number
+  operatorValuesPatchFilePath:
+    # a local file of the submitting machine; its contents come in patchFiles
+    # (Round 14): stored as patches/operator/<name>-<uid>.yaml by patch-cluster.sh
+    type: patchFile
+    workflows: {patch: optional}
+  patchMode:
+    # apply | clear (Round 14); the default of the cluster's instances too
+    type: enum
+    values: [apply, clear]
+    workflows: {patch: optional}
+  deleteOperator:
+    type: boolean
+    workflows: {delete-apps: optional}
+    flag: ""
+  force:
+    type: boolean
+    workflows: {delete-apps: optional}
+
+instance:
+  postgresVersion:
+    type: postgresVersion
+    workflows:
+      day0: required
+      create-instance: required
+      upgrade: optional
+      patch: guard
+      backup: guard
+      backup-retention: guard
+      scale: guard
+      delete-instance: guard
+      delete-apps: guard
+      network-policy: guard
+    fleet: [.instance.postgresVersion]
+    format: postgresVersion
+  highAvailability:
+    type: boolean
+    workflows: {day0: required, create-instance: required}
+    fleet: [.instance.highAvailability.enabled]
+    format: boolean
+  readReplicas:
+    type: integer
+    workflows: {day0: optional, create-instance: optional}
+    fleet: [.instance.highAvailability.readReplicas]
+    format: number
+  storageSize:
+    type: quantity
+    workflows: {day0: optional, create-instance: optional}
+    fleet: [.instance.storageSize]
+  walStorageSize:
+    type: quantity
+    workflows: {day0: optional, create-instance: optional}
+    fleet: [.instance.walStorageSize]
+  storageClass:
+    type: name
+    workflows: {day0: optional, create-instance: optional}
+    fleet: [.instance.storageClassName]
+  cpu:
+    type: quantity
+    workflows: {day0: optional, create-instance: optional}
+    fleet: [.instance.resources.data.requests.cpu, .instance.resources.data.limits.cpu]
+  memory:
+    type: quantity
+    workflows: {day0: optional, create-instance: optional}
+    fleet: [.instance.resources.data.requests.memory, .instance.resources.data.limits.memory]
+  backupSchedule:
+    # fleet: included in the backup CronWorkflows; none: backup.scheduled false;
+    # operator: backup.scheduled false and backup.operatorSchedules (PostgresBackupSchedule
+    # objects, design decision D70), written by fleet-day0.sh
+    type: enum
+    values: [fleet, none, operator]
+    workflows: {day0: optional, create-instance: optional}
+  operatorFullSchedule:
+    # backupSchedule=operator: backup.operatorSchedules.full
+    type: cron
+    workflows: {day0: optional, create-instance: optional}
+  operatorIncrementalSchedule:
+    # backupSchedule=operator: backup.operatorSchedules.incremental; none (or an
+    # empty value) renders the full schedule only
+    type: cron
+    allowNone: true
+    workflows: {day0: optional, create-instance: optional}
+  # ---- FerretDB (design decision D71): the ferret block of the instance entry,
+  # written by fleet-day0.sh only when ferret is true (false removes the block)
+  ferret:
+    type: boolean
+    workflows: {day0: optional, create-instance: optional}
+  ferretReplicas:
+    type: posint
+    workflows: {day0: optional, create-instance: optional}
+  ferretReadOnlyReplicas:
+    type: integer
+    workflows: {day0: optional, create-instance: optional}
+  ferretExposure:
+    type: enum
+    values: [clusterIP, internalLoadBalancer, loadBalancer]
+    workflows: {day0: optional, create-instance: optional}
+  ferretSecretName:
+    type: k8sName
+    workflows: {day0: optional, create-instance: optional}
+  ferretReadOnlySecretName:
+    type: k8sName
+    workflows: {day0: optional, create-instance: optional}
+  enableSSL:
+    type: boolean
+    workflows: {day0: optional, create-instance: optional}
+    flag: backupEnableSSL
+    fleet: [.backup.enableSSL]
+    format: boolean
+  postgresPatchFilePath:
+    # a local file of the submitting machine; its contents come in patchFiles
+    # (Round 14): stored as charts/tpg-instance/patches/<name>-<uid>.yaml and
+    # recorded as patches.postgres.current by tpg-patch and tpg-create-instance
+    type: patchFile
+    workflows: {patch: optional, create-instance: optional}
+  valuesPatchFilePath:
+    # as postgresPatchFilePath, recorded as patches.values.current
+    type: patchFile
+    workflows: {patch: optional, create-instance: optional}
+  patchMode:
+    type: enum
+    values: [apply, clear]
+    workflows: {patch: optional}
+  backupType:
+    type: enum
+    values: [full, incremental, differential]
+    workflows: {backup: optional}
+  backupTimeoutSeconds:
+    type: posint
+    workflows: {backup: optional}
+  retentionDays:
+    type: posint
+    workflows: {backup-retention: optional}
+  replicas:
+    type: integer
+    workflows: {scale: required}
+  enableHAIfNeeded:
+    type: boolean
+    workflows: {scale: optional}
+  preUpgradeBackup:
+    type: boolean
+    workflows: {upgrade: optional}
+  allowMajor:
+    type: boolean
+    workflows: {upgrade: optional}
+  purgePvcs:
+    type: boolean
+    workflows: {delete-instance: optional, delete-apps: optional}
+  purgeNamespace:
+    type: boolean
+    workflows: {delete-instance: optional, delete-apps: optional}
+  finalBackup:
+    type: enum
+    values: ["true", "false", required]
+    workflows: {delete-instance: optional, delete-apps: optional}
+  # ---- exposure (design decision D64): how the instance's Services are
+  # published. The chart turns exposure into spec.serviceType and the Azure
+  # load balancer annotations; serviceAnnotations are added as given.
+  exposure:
+    type: enum
+    values: [clusterIP, internalLoadBalancer, loadBalancer]
+    workflows: {day0: optional, create-instance: optional}
+    fleet: [.instance.exposure]
+  serviceAnnotations:
+    type: stringMap
+    workflows: {day0: optional, create-instance: optional}
+    fleet: [.instance.serviceAnnotations]
+    format: map
+  readOnlyExposure:
+    type: enum
+    values: [clusterIP, internalLoadBalancer, loadBalancer]
+    workflows: {day0: optional, create-instance: optional}
+    fleet: [.instance.readOnlyExposure]
+  readOnlyServiceAnnotations:
+    type: stringMap
+    workflows: {day0: optional, create-instance: optional}
+    fleet: [.instance.readOnlyServiceAnnotations]
+    format: map
+  allowedSourceRanges:
+    # Both load balancer Services: service.beta.kubernetes.io/azure-allowed-ip-ranges
+    type: cidrList
+    workflows: {day0: optional, create-instance: optional}
+    fleet: [.instance.allowedSourceRanges]
+    format: list
+  internalLoadBalancerSubnet:
+    type: azureName
+    workflows: {day0: optional, create-instance: optional}
+    fleet: [.instance.internalLoadBalancerSubnet]
+  # ---- network policy (design decision D65): default deny plus the flows the
+  # instance needs, then these client rules. networkPolicy none renders nothing.
+  networkPolicy:
+    # tpg-network-policy sets baseline itself (mode apply or update)
+    type: enum
+    values: [none, baseline]
+    workflows: {day0: optional, create-instance: optional}
+    fleet: [.network.policy]
+  ingressFromNamespaces:
+    type: nameList
+    workflows: {day0: optional, create-instance: optional, network-policy: optional}
+    fleet: [.network.ingressFromNamespaces]
+    format: list
+  ingressFromPodLabels:
+    type: stringMap
+    workflows: {day0: optional, create-instance: optional, network-policy: optional}
+    fleet: [.network.ingressFromPodLabels]
+    format: map
+  ingressFromCidrs:
+    type: cidrList
+    workflows: {day0: optional, create-instance: optional, network-policy: optional}
+    fleet: [.network.ingressFromCidrs]
+    format: list
+  egressToCidrs:
+    type: cidrList
+    workflows: {day0: optional, create-instance: optional, network-policy: optional}
+    fleet: [.network.egressToCidrs]
+    format: list
+  egressToFqdns:
+    # CiliumNetworkPolicy toFQDNs: needs ACNS (Terraform acns_enabled = true)
+    type: fqdnList
+    workflows: {day0: optional, create-instance: optional, network-policy: optional}
+    fleet: [.network.egressToFqdns]
+    format: list

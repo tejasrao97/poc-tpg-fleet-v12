@@ -1,0 +1,8 @@
+apiVersion: v2
+name: crd-reference
+description: >-
+  Reference only (never deployed): one template per Tanzu for Postgres 4.5 CRD, each
+  documenting its fields, defaults and the zero defaults the fleet leaves out
+type: application
+version: 1.0.0
+appVersion: "4.5.0"
