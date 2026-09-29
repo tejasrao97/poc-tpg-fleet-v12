@@ -48,7 +48,9 @@ clusters:
           enableSSL: false
         patches:
           postgres:
-            current: patches/pg-res-hl621.yaml
+            previous:
+              path: patches/pg-res-hl621.yaml
+              commit: 2a3deef2ba8584e2e2ac1b481d56301bc7ae784d
   aks-tpg-poc-02:
     operator:
       version: v4.4.0
