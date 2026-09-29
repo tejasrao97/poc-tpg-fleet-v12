@@ -93,6 +93,12 @@ clusters:
           enableSSL: false
         patches:
           postgres:
-            current: patches/pg-res-etkuw.yaml
+            current: patches/pg-res-nf9mp.yaml
+            previous:
+              path: patches/pg-res-etkuw.yaml
+              commit: ddecb4d6575891540ff35ecf5e26f11c8424fa33
           values:
-            current: patches/pg-bkp-akw72.yaml
+            current: patches/pg-bkp-efolt.yaml
+            previous:
+              path: patches/pg-bkp-akw72.yaml
+              commit: ddecb4d6575891540ff35ecf5e26f11c8424fa33
