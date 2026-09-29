@@ -31,32 +31,7 @@ clusters:
   aks-tpg-poc-01:
     operator:
       version: v4.4.0
-    instances:
-      orders-db:
-        instance:
-          postgresVersion: postgres-16.8
-          highAvailability:
-            enabled: true
-            readReplicas: 3
-          resources:
-            data:
-              requests:
-                memory: 8Gi
-              limits:
-                memory: 8Gi
-        backup:
-          enableSSL: false
-        patches:
-          postgres:
-            previous:
-              path: patches/pg-res-etkuw.yaml
-              commit: ddecb4d6575891540ff35ecf5e26f11c8424fa33
-            current: patches/pg-res-nf9mp.yaml
-          values:
-            current: patches/pg-bkp-efolt.yaml
-            previous:
-              path: patches/pg-bkp-akw72.yaml
-              commit: ddecb4d6575891540ff35ecf5e26f11c8424fa33
+    instances: {}
   aks-tpg-poc-02:
     operator:
       version: v4.4.0
