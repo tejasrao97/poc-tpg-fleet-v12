@@ -49,11 +49,14 @@ clusters:
         patches:
           postgres:
             previous:
-              path: patches/pg-res-hl621.yaml
-              commit: 2a3deef2ba8584e2e2ac1b481d56301bc7ae784d
-            current: patches/pg-res-etkuw.yaml
+              path: patches/pg-res-etkuw.yaml
+              commit: ddecb4d6575891540ff35ecf5e26f11c8424fa33
+            current: patches/pg-res-nf9mp.yaml
           values:
-            current: patches/pg-bkp-akw72.yaml
+            current: patches/pg-bkp-efolt.yaml
+            previous:
+              path: patches/pg-bkp-akw72.yaml
+              commit: ddecb4d6575891540ff35ecf5e26f11c8424fa33
   aks-tpg-poc-02:
     operator:
       version: v4.4.0
