@@ -64,6 +64,11 @@ clusters:
           storageSize: 50Gi
         backup:
           enableSSL: false
+        patches:
+          postgres:
+            current: patches/pg-res-hl621.yaml
+          values:
+            current: patches/pg-val-t9jtf.yaml
   aks-tpg-poc-03:
     operator:
       version: v4.4.0
